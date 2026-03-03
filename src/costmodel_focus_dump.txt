@@ -1,0 +1,3484 @@
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\costModel\defaults.ts =====
+
+// src/domain/costModel/defaults.ts
+import type { CostProfile } from "./types";
+
+export const DEFAULT_COST_PROFILE: CostProfile = {
+  payment: {
+    feePercent: 0.029,
+    feeFixed: 0.3,
+  },
+  shipping: {
+    costPerOrder: 0,
+  },
+  ads: {
+    allocationMode: "BY_NET_SALES",
+  },
+  fixedCosts: {
+    allocationMode: "PER_ORDER",
+    daysInMonth: 30,
+    monthlyItems: [],
+  },
+  derived: {
+    fixedCostsMonthlyTotal: 0,
+  },
+  flags: {
+    includeShippingCost: true,
+  },
+};
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\costModel\fingerprint.ts =====
+
+// src/domain/costModel/fingerprint.ts
+
+function stableStringify(obj: any): string {
+  const seen = new WeakSet();
+
+  const sorter = (value: any): any => {
+    if (value === null || typeof value !== "object") return value;
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+
+    if (Array.isArray(value)) return value.map(sorter);
+
+    const keys = Object.keys(value).sort();
+    const out: any = {};
+    for (const k of keys) out[k] = sorter(value[k]);
+    return out;
+  };
+
+  return JSON.stringify(sorter(obj));
+}
+
+function simpleHash(str: string): string {
+  // FNV-1a-ish 32bit (deterministic, fast)
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+export function buildFingerprint(payload: any): string {
+  return simpleHash(stableStringify(payload));
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\costModel\fixedCosts.monthlyItems.ts =====
+
+// src/domain/costModel/fixedCosts.monthlyItems.ts
+import type { FixedCostMonthlyItem } from "./types";
+
+export function sanitizeMonthlyItem(x: any): FixedCostMonthlyItem | null {
+  if (!x || typeof x !== "object") return null;
+
+  const id = String(x.id ?? "").trim();
+  const name = String(x.name ?? "").trim();
+  const category = String(x.category ?? "").trim();
+  const amountMonthly = Number(x.amountMonthly ?? 0);
+  const enabled = Boolean(x.enabled ?? true);
+
+  if (!id || !name) return null;
+  if (!Number.isFinite(amountMonthly) || amountMonthly < 0) return null;
+
+  return {
+    id,
+    name,
+    category: category || "OTHER",
+    amountMonthly,
+    enabled,
+  };
+}
+
+export function computeFixedCostsMonthlyTotal(items: FixedCostMonthlyItem[]): number {
+  let sum = 0;
+  for (const it of items) {
+    if (!it.enabled) continue;
+    sum += Number(it.amountMonthly || 0);
+  }
+  // keep deterministic (no rounding here)
+  return Number.isFinite(sum) ? sum : 0;
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\costModel\overrides.parse.ts =====
+
+// src/domain/costModel/overrides.parse.ts
+import type { CostProfileOverrides } from "./types";
+
+/**
+ * Helper to build overrides from raw query/body safely.
+ *
+ * Supports BOTH:
+ * 1) flat legacy keys: fixedCostsDaysInMonth, fixedCostsMonthlyItems, fixedCostsAllocationMode
+ * 2) nested object: { fixedCosts: { daysInMonth, allocationMode, monthlyItems } }
+ */
+export function costOverridesFromAny(input: any): CostProfileOverrides | undefined {
+  if (!input || typeof input !== "object") return undefined;
+
+  // payment/shipping/flags/ads (flat)
+  const feePercent = input.feePercent ?? input.paymentFeePercent ?? undefined;
+  const feeFixed = input.feeFixed ?? input.paymentFeeFixed ?? undefined;
+
+  const shippingCost =
+    input.shippingCostPerOrder ?? input.defaultShippingCost ?? input.shippingCost ?? undefined;
+
+  const includeShippingCost = input.includeShippingCost ?? undefined;
+  const allocationMode = input.adAllocationMode ?? input.allocationMode ?? undefined;
+
+  // fixed costs: accept nested OR flat
+  const fixedObj = input.fixedCosts && typeof input.fixedCosts === "object" ? input.fixedCosts : undefined;
+
+  const fixedCostsAllocationMode = fixedObj?.allocationMode ?? input.fixedCostsAllocationMode ?? undefined;
+  const fixedCostsDaysInMonth = fixedObj?.daysInMonth ?? input.fixedCostsDaysInMonth ?? undefined;
+  const fixedCostsMonthlyItems = fixedObj?.monthlyItems ?? input.fixedCostsMonthlyItems ?? undefined;
+
+  const out: CostProfileOverrides = {};
+
+  if (feePercent !== undefined || feeFixed !== undefined) {
+    out.payment = {};
+    if (feePercent !== undefined) out.payment.feePercent = Number(feePercent);
+    if (feeFixed !== undefined) out.payment.feeFixed = Number(feeFixed);
+  }
+
+  if (shippingCost !== undefined) {
+    out.shipping = { costPerOrder: Number(shippingCost) };
+  }
+
+  if (allocationMode !== undefined && (allocationMode === "BY_NET_SALES" || allocationMode === "PER_ORDER")) {
+    out.ads = { allocationMode };
+  }
+
+  if (includeShippingCost !== undefined) {
+    out.flags = { includeShippingCost: Boolean(includeShippingCost) };
+  }
+
+  // fixed costs parse (only if anything present)
+  if (
+    fixedCostsAllocationMode !== undefined ||
+    fixedCostsDaysInMonth !== undefined ||
+    fixedCostsMonthlyItems !== undefined
+  ) {
+    out.fixedCosts = {};
+
+    if (fixedCostsAllocationMode !== undefined)
+      out.fixedCosts.allocationMode = String(fixedCostsAllocationMode) as any;
+
+    if (fixedCostsDaysInMonth !== undefined) out.fixedCosts.daysInMonth = Number(fixedCostsDaysInMonth);
+
+    if (fixedCostsMonthlyItems !== undefined) {
+      // accept array only, ignore otherwise
+      if (Array.isArray(fixedCostsMonthlyItems)) out.fixedCosts.monthlyItems = fixedCostsMonthlyItems as any;
+    }
+  }
+
+  if (!out.payment && !out.shipping && !out.ads && !out.flags && !out.fixedCosts) return undefined;
+  return out;
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\costModel\resolve.ts =====
+
+// src/domain/costModel/resolve.ts
+import { toNumber } from "../../utils/money";
+import { DEFAULT_COST_PROFILE } from "./defaults";
+import type { CostProfile, CostProfileOverrides, ResolvedCostProfile, FixedCostMonthlyItem } from "./types";
+
+import { clampNonNegative, clampPositive, isAdMode, isFixedAllocMode } from "./resolve.utils";
+import { buildFingerprint } from "./fingerprint";
+import { sanitizeMonthlyItem, computeFixedCostsMonthlyTotal } from "./fixedCosts.monthlyItems";
+export { costOverridesFromAny } from "./overrides.parse";
+
+/**
+ * Base profile derived from ENV/app config only.
+ */
+export function resolveCostProfileFromConfig(config: {
+  PAYMENT_FEE_PERCENT?: number;
+  PAYMENT_FEE_FIXED?: number;
+  DEFAULT_SHIPPING_COST?: number;
+
+  // optional defaults from env (future)
+  FIXED_COSTS_DAYS_IN_MONTH?: number;
+}): CostProfile {
+  const feePercent = toNumber(config.PAYMENT_FEE_PERCENT, DEFAULT_COST_PROFILE.payment.feePercent);
+  const feeFixed = toNumber(config.PAYMENT_FEE_FIXED, DEFAULT_COST_PROFILE.payment.feeFixed);
+  const shippingCostPerOrder = toNumber(config.DEFAULT_SHIPPING_COST, DEFAULT_COST_PROFILE.shipping.costPerOrder);
+
+  const daysInMonth = toNumber(config.FIXED_COSTS_DAYS_IN_MONTH, DEFAULT_COST_PROFILE.fixedCosts.daysInMonth);
+
+  // base has no monthly items by default (persisted overrides will add)
+  const baseFixedItems = DEFAULT_COST_PROFILE.fixedCosts.monthlyItems;
+
+  const fixedCostsMonthlyTotal = computeFixedCostsMonthlyTotal(baseFixedItems);
+
+  return {
+    ...DEFAULT_COST_PROFILE,
+    payment: {
+      feePercent: clampNonNegative(feePercent, DEFAULT_COST_PROFILE.payment.feePercent),
+      feeFixed: clampNonNegative(feeFixed, DEFAULT_COST_PROFILE.payment.feeFixed),
+    },
+    shipping: {
+      costPerOrder: clampNonNegative(shippingCostPerOrder, DEFAULT_COST_PROFILE.shipping.costPerOrder),
+    },
+    fixedCosts: {
+      allocationMode: DEFAULT_COST_PROFILE.fixedCosts.allocationMode,
+      daysInMonth: clampPositive(daysInMonth, DEFAULT_COST_PROFILE.fixedCosts.daysInMonth),
+      monthlyItems: baseFixedItems,
+    },
+    derived: {
+      fixedCostsMonthlyTotal,
+    },
+  };
+}
+
+/**
+ * ✅ Cost Model Engine (SSOT)
+ */
+export function resolveCostProfile(params: {
+  config: {
+    PAYMENT_FEE_PERCENT?: number;
+    PAYMENT_FEE_FIXED?: number;
+    DEFAULT_SHIPPING_COST?: number;
+    FIXED_COSTS_DAYS_IN_MONTH?: number;
+  };
+  overrides?: CostProfileOverrides;
+}): ResolvedCostProfile {
+  const base = resolveCostProfileFromConfig(params.config);
+  const o = params.overrides;
+
+  const feePercentRaw = o?.payment?.feePercent;
+  const feeFixedRaw = o?.payment?.feeFixed;
+  const shipRaw = o?.shipping?.costPerOrder;
+
+  const includeShippingCostRaw = o?.flags?.includeShippingCost;
+  const modeRaw = o?.ads?.allocationMode;
+
+  const fixedModeRaw = o?.fixedCosts?.allocationMode;
+  const fixedDaysRaw = o?.fixedCosts?.daysInMonth;
+  const fixedItemsRaw = o?.fixedCosts?.monthlyItems;
+
+  const fixedItems: FixedCostMonthlyItem[] =
+    Array.isArray(fixedItemsRaw) && fixedItemsRaw.length > 0
+      ? fixedItemsRaw.map(sanitizeMonthlyItem).filter((x): x is FixedCostMonthlyItem => x !== null)
+      : base.fixedCosts.monthlyItems;
+
+  const fixedCostsMonthlyTotal = computeFixedCostsMonthlyTotal(fixedItems);
+
+  const resolved: CostProfile = {
+    payment: {
+      feePercent:
+        feePercentRaw === undefined
+          ? base.payment.feePercent
+          : clampNonNegative(Number(feePercentRaw), base.payment.feePercent),
+      feeFixed:
+        feeFixedRaw === undefined ? base.payment.feeFixed : clampNonNegative(Number(feeFixedRaw), base.payment.feeFixed),
+    },
+    shipping: {
+      costPerOrder:
+        shipRaw === undefined ? base.shipping.costPerOrder : clampNonNegative(Number(shipRaw), base.shipping.costPerOrder),
+    },
+    ads: {
+      allocationMode: isAdMode(modeRaw) ? modeRaw : base.ads.allocationMode,
+    },
+    fixedCosts: {
+      allocationMode: isFixedAllocMode(fixedModeRaw) ? fixedModeRaw : base.fixedCosts.allocationMode,
+      daysInMonth:
+        fixedDaysRaw === undefined
+          ? base.fixedCosts.daysInMonth
+          : clampPositive(Number(fixedDaysRaw), base.fixedCosts.daysInMonth),
+      monthlyItems: fixedItems,
+    },
+    derived: {
+      fixedCostsMonthlyTotal,
+    },
+    flags: {
+      includeShippingCost:
+        includeShippingCostRaw === undefined ? base.flags.includeShippingCost : Boolean(includeShippingCostRaw),
+    },
+  };
+
+  const metaPayload = {
+    resolved,
+    resolvedFrom: {
+      config: params.config,
+      overrides: params.overrides ?? undefined,
+    },
+  };
+
+  const fingerprint = buildFingerprint(metaPayload);
+
+  return {
+    ...resolved,
+    meta: {
+      fingerprint,
+      resolvedFrom: metaPayload.resolvedFrom,
+    },
+  };
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\costModel\resolve.utils.ts =====
+
+// src/domain/costModel/resolve.utils.ts
+import type { AdSpendAllocationMode, FixedCostsAllocationMode } from "./types";
+
+export function clampNonNegative(n: number, fallback: number) {
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+export function clampPositive(n: number, fallback: number) {
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function isAdMode(x: any): x is AdSpendAllocationMode {
+  return x === "BY_NET_SALES" || x === "PER_ORDER";
+}
+
+export function isFixedAllocMode(x: any): x is FixedCostsAllocationMode {
+  return x === "PER_ORDER" || x === "BY_NET_SALES";
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\costModel\types.ts =====
+
+// src/domain/costModel/types.ts
+
+export type AdSpendAllocationMode = "BY_NET_SALES" | "PER_ORDER";
+export type FixedCostsAllocationMode = "PER_ORDER" | "BY_NET_SALES"; // ✅ now supported
+
+export type FixedCostMonthlyItem = {
+  id: string; // stable identifier
+  name: string;
+  category: string; // keep as string (UI will map)
+  amountMonthly: number; // >= 0
+  enabled: boolean;
+};
+
+export type CostProfile = {
+  payment: {
+    feePercent: number; // e.g. 0.029
+    feeFixed: number; // e.g. 0.30
+  };
+
+  shipping: {
+    costPerOrder: number; // fallback shipping cost if no order-level shipping cost exists
+  };
+
+  ads: {
+    allocationMode: AdSpendAllocationMode;
+  };
+
+  fixedCosts: {
+    allocationMode: FixedCostsAllocationMode; // ✅ PER_ORDER | BY_NET_SALES
+    daysInMonth: number; // default 30
+    monthlyItems: FixedCostMonthlyItem[];
+  };
+
+  // derived, computed deterministically by resolveCostProfile()
+  derived: {
+    fixedCostsMonthlyTotal: number;
+  };
+
+  flags: {
+    includeShippingCost: boolean;
+  };
+};
+
+// Overrides sind optional/partiell
+export type CostProfileOverrides = Partial<{
+  payment: Partial<CostProfile["payment"]>;
+  shipping: Partial<CostProfile["shipping"]>;
+  ads: Partial<CostProfile["ads"]>;
+  fixedCosts: Partial<CostProfile["fixedCosts"]>;
+  flags: Partial<CostProfile["flags"]>;
+}>;
+
+export type ResolvedCostProfile = CostProfile & {
+  meta: {
+    fingerprint: string;
+    resolvedFrom: {
+      config: any;
+      overrides?: CostProfileOverrides;
+    };
+  };
+};
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\ads.ts =====
+
+// src/domain/profit/ads.ts
+import { round2 } from "../../utils/money";
+
+export type AdSpendMode = "BY_NET_SALES" | "PER_ORDER";
+
+/**
+ * Deterministic allocation.
+ * Default for MVP: BY_NET_SALES (proportional to net sales).
+ */
+export function allocateAdSpendForOrders<T extends { netAfterRefunds: number }>(params: {
+  rows: T[];
+  adSpend: number;
+  mode?: AdSpendMode;
+}): Array<T & { allocatedAdSpend: number }> {
+  const { rows } = params;
+  const adSpend = Number(params.adSpend || 0);
+  const mode = params.mode ?? "BY_NET_SALES";
+
+  if (!Number.isFinite(adSpend) || adSpend <= 0 || rows.length === 0) {
+    return rows.map((r) => ({ ...r, allocatedAdSpend: 0 }));
+  }
+
+  if (mode === "PER_ORDER") {
+    const per = adSpend / rows.length;
+    return rows.map((r) => ({ ...r, allocatedAdSpend: round2(per) }));
+  }
+
+  // BY_NET_SALES
+  const totalNet = rows.reduce((s, r) => s + Number(r.netAfterRefunds || 0), 0);
+
+  if (totalNet <= 0) {
+    // fallback: even split
+    const per = adSpend / rows.length;
+    return rows.map((r) => ({ ...r, allocatedAdSpend: round2(per) }));
+  }
+
+  // Allocate proportionally; keep rounding drift controlled by correcting last row
+  let allocatedSum = 0;
+  const out = rows.map((r, idx) => {
+    const net = Number(r.netAfterRefunds || 0);
+    let alloc = (net / totalNet) * adSpend;
+    alloc = round2(alloc);
+
+    if (idx === rows.length - 1) {
+      const drift = round2(adSpend - allocatedSum);
+      alloc = round2(drift);
+    } else {
+      allocatedSum = round2(allocatedSum + alloc);
+    }
+
+    return { ...r, allocatedAdSpend: alloc };
+  });
+
+  return out;
+}
+
+export function allocateAdSpendForProducts<T extends { netSales: number }>(params: {
+  rows: T[];
+  adSpend: number;
+}): Array<T & { allocatedAdSpend: number }> {
+  const { rows } = params;
+  const adSpend = Number(params.adSpend || 0);
+
+  if (!Number.isFinite(adSpend) || adSpend <= 0 || rows.length === 0) {
+    return rows.map((r) => ({ ...r, allocatedAdSpend: 0 }));
+  }
+
+  const totalNet = rows.reduce((s, r) => s + Number(r.netSales || 0), 0);
+
+  if (totalNet <= 0) {
+    const per = adSpend / rows.length;
+    return rows.map((r) => ({ ...r, allocatedAdSpend: round2(per) }));
+  }
+
+  let allocatedSum = 0;
+  const out = rows.map((r, idx) => {
+    const net = Number(r.netSales || 0);
+    let alloc = (net / totalNet) * adSpend;
+    alloc = round2(alloc);
+
+    if (idx === rows.length - 1) {
+      const drift = round2(adSpend - allocatedSum);
+      alloc = round2(drift);
+    } else {
+      allocatedSum = round2(allocatedSum + alloc);
+    }
+
+    return { ...r, allocatedAdSpend: alloc };
+  });
+
+  return out;
+}
+
+export function computeProfitAfterAds(params: {
+  profitBeforeAds: number;
+  allocatedAdSpend: number;
+}) {
+  const p = Number(params.profitBeforeAds || 0);
+  const a = Number(params.allocatedAdSpend || 0);
+  return round2(p - a);
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\cogsGovernance.test.ts =====
+
+import { describe, it, expect } from "vitest";
+import { isMissingUnitCost } from "./cogsGovernance";
+
+describe("isMissingUnitCost (SSOT governance) - Option C", () => {
+  it("undefined => missing ALWAYS", () => {
+    expect(isMissingUnitCost({ unitCost: undefined, variantId: 1 })).toBe(true);
+    expect(isMissingUnitCost({ unitCost: undefined, variantId: 1, isIgnoredVariant: () => true })).toBe(true);
+  });
+
+  it("0 => missing when not ignored", () => {
+    expect(isMissingUnitCost({ unitCost: 0, variantId: 1 })).toBe(true);
+  });
+
+  it("0 => not missing when ignored", () => {
+    expect(isMissingUnitCost({ unitCost: 0, variantId: 1, isIgnoredVariant: () => true })).toBe(false);
+  });
+
+  it(">0 => not missing", () => {
+    expect(isMissingUnitCost({ unitCost: 12.34, variantId: 1 })).toBe(false);
+  });
+});
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\cogsGovernance.ts =====
+
+// src/domain/profit/cogsGovernance.ts
+
+/**
+ * Missing-COGS governance (SSOT) - Option C:
+ * - unitCost === undefined => missing ALWAYS (even if ignored)
+ * - unitCost === 0 => missing unless ignored
+ * - unitCost > 0 => not missing
+ *
+ * Interpretation:
+ * - "ignored" means: 0 is allowed (freebie/service), but unknown is still missing data.
+ */
+export function isMissingUnitCost(params: {
+  unitCost: number | undefined;
+  variantId: number;
+  isIgnoredVariant?: (variantId: number) => boolean;
+}): boolean {
+  const { unitCost, variantId, isIgnoredVariant } = params;
+
+  // Unknown cost is ALWAYS missing (even if ignored)
+  if (unitCost === undefined) return true;
+
+  // Explicit 0 is only OK if variant is ignored
+  if (unitCost === 0) return !Boolean(isIgnoredVariant?.(variantId));
+
+  // Any positive finite cost => not missing
+  return false;
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\fees.ts =====
+
+// src/domain/profit/fees.ts
+
+export function calcPaymentFees(params: {
+  netAfterRefunds: number;
+  orderCount: number;
+  feePercent: number;
+  feeFixed: number;
+}): number {
+  const { netAfterRefunds, orderCount, feePercent, feeFixed } = params;
+  return netAfterRefunds * feePercent + orderCount * feeFixed;
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\fixedCosts.ts =====
+
+// src/domain/profit/fixedCosts.ts
+import { round2 } from "../../utils/money";
+
+export type FixedCostsMode = "PER_ORDER" | "BY_NET_SALES";
+
+/**
+ * Deterministic fixed cost allocation.
+ * - PER_ORDER: even split
+ * - BY_NET_SALES: proportional to netAfterRefunds (like Ads), with rounding drift correction on last row
+ */
+export function allocateFixedCostsForOrders<T extends { netAfterRefunds: number }>(params: {
+  rows: T[];
+  fixedCostsTotal: number; // allocated for the period already
+  mode?: FixedCostsMode;
+}): Array<T & { fixedCostAllocated: number }> {
+  const { rows } = params;
+  const total = Number(params.fixedCostsTotal || 0);
+  const mode = params.mode ?? "PER_ORDER";
+
+  if (!Number.isFinite(total) || total <= 0 || rows.length === 0) {
+    return rows.map((r) => ({ ...r, fixedCostAllocated: 0 }));
+  }
+
+  if (mode === "PER_ORDER") {
+    const per = total / rows.length;
+    return rows.map((r) => ({ ...r, fixedCostAllocated: round2(per) }));
+  }
+
+  // BY_NET_SALES
+  const totalNet = rows.reduce((s, r) => s + Number(r.netAfterRefunds || 0), 0);
+
+  if (totalNet <= 0) {
+    // fallback: even split
+    const per = total / rows.length;
+    return rows.map((r) => ({ ...r, fixedCostAllocated: round2(per) }));
+  }
+
+  let allocatedSum = 0;
+  const out = rows.map((r, idx) => {
+    const net = Number(r.netAfterRefunds || 0);
+    let alloc = (net / totalNet) * total;
+    alloc = round2(alloc);
+
+    if (idx === rows.length - 1) {
+      // correct rounding drift on last row
+      const drift = round2(total - allocatedSum);
+      alloc = round2(drift);
+    } else {
+      allocatedSum = round2(allocatedSum + alloc);
+    }
+
+    return { ...r, fixedCostAllocated: alloc };
+  });
+
+  return out;
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\orderProfit.test.ts =====
+
+import { describe, it, expect } from "vitest";
+import { calculateOrderProfit } from "./orderProfit";
+
+// Minimaler Dummy – wird nicht genutzt, solange wir unitCostByVariant setzen.
+const dummyCogsService: any = {
+  computeCogsForVariants: async () => {
+    throw new Error("computeCogsForVariants should not be called when unitCostByVariant is provided");
+  }
+};
+const dummyShopifyGET: any = async () => {
+  throw new Error("shopifyGET should not be called in these tests");
+};
+
+function makeOrder(params: {
+  id?: string | number;
+  total_price: number;
+  shippingAmount?: number;
+  refunds?: Array<{ transactions?: Array<{ amount: number | string }> }>;
+  line_items?: Array<{ variant_id?: number | null; quantity: number; gift_card?: boolean }>;
+}) {
+  return {
+    id: params.id ?? "1",
+    total_price: String(params.total_price),
+    total_shipping_price_set:
+      params.shippingAmount === undefined
+        ? undefined
+        : { shop_money: { amount: String(params.shippingAmount) } },
+    refunds: params.refunds ?? [],
+    line_items: params.line_items ?? []
+  };
+}
+
+describe("calculateOrderProfit (SSOT)", () => {
+  it("berechnet Refunds korrekt und Fees auf netAfterRefunds (percent + fixed)", async () => {
+    const order = makeOrder({
+      id: "1001",
+      total_price: 100,
+      shippingAmount: 5,
+      refunds: [{ transactions: [{ amount: 10 }] }], // refunds = 10
+      line_items: [{ variant_id: 11, quantity: 1 }]
+    });
+
+    const unitCostByVariant = new Map<number, number>([[11, 30]]);
+
+    const costProfile: any = {
+      payment: { feePercent: 0.03, feeFixed: 0.35 },
+      shipping: { costPerOrder: 7 },
+      flags: { includeShippingCost: true }
+    };
+
+    const out = await calculateOrderProfit({
+      order,
+      costProfile,
+      cogsService: dummyCogsService,
+      shopifyGET: dummyShopifyGET,
+      unitCostByVariant
+    });
+
+    // grossSales = 100
+    expect(out.grossSales).toBe(100);
+
+    // refunds = 10 => net = 90
+    expect(out.refunds).toBe(10);
+    expect(out.netAfterRefunds).toBe(90);
+
+    // cogs = 30
+    expect(out.cogs).toBe(30);
+
+    // paymentFees = netAfterRefunds * 0.03 + 0.35 = 90*0.03 + 0.35 = 2.7 + 0.35 = 3.05
+    expect(out.paymentFees).toBeCloseTo(3.05, 2);
+
+    // contributionMargin = net - cogs - fees = 90 - 30 - 3.05 = 56.95
+    expect(out.contributionMargin).toBeCloseTo(56.95, 2);
+
+    // shipping revenue extracted
+    expect(out.shippingRevenue).toBe(5);
+
+    // shipping cost included: 7
+    expect(out.shippingCost).toBe(7);
+
+    // profitAfterShipping = contributionMargin - shippingCost = 49.95
+    expect(out.profitAfterShipping).toBeCloseTo(49.95, 2);
+
+    // compatibility
+    expect(out.profitAfterFees).toBeCloseTo(out.contributionMargin, 5);
+    expect(out.marginAfterFeesPct).toBeCloseTo(out.contributionMarginPct, 5);
+
+    // gift card flags
+    expect(out.isGiftCardOnlyOrder).toBe(false);
+    expect(out.giftCardNetSalesExcluded).toBe(0);
+  });
+
+  it("setzt shippingCost = 0 wenn includeShippingCost=false", async () => {
+    const order = makeOrder({
+      id: "1002",
+      total_price: 100,
+      shippingAmount: 0,
+      refunds: [],
+      line_items: [{ variant_id: 11, quantity: 1 }]
+    });
+
+    const unitCostByVariant = new Map<number, number>([[11, 10]]);
+
+    const costProfile: any = {
+      payment: { feePercent: 0.0, feeFixed: 0.0 },
+      shipping: { costPerOrder: 99 }, // sollte ignoriert werden
+      flags: { includeShippingCost: false }
+    };
+
+    const out = await calculateOrderProfit({
+      order,
+      costProfile,
+      cogsService: dummyCogsService,
+      shopifyGET: dummyShopifyGET,
+      unitCostByVariant
+    });
+
+    expect(out.netAfterRefunds).toBe(100);
+    expect(out.cogs).toBe(10);
+    expect(out.paymentFees).toBe(0);
+
+    // CM = 90
+    expect(out.contributionMargin).toBe(90);
+
+    // shipping ignored
+    expect(out.shippingCost).toBe(0);
+    expect(out.profitAfterShipping).toBe(90);
+  });
+
+  it("liefert shippingRevenue=0 wenn keine shipping fields vorhanden sind", async () => {
+    const order = {
+      id: "1003",
+      total_price: "50",
+      refunds: [],
+      line_items: [{ variant_id: 11, quantity: 1 }]
+      // keine shipping felder
+    };
+
+    const unitCostByVariant = new Map<number, number>([[11, 0]]);
+
+    const costProfile: any = {
+      payment: { feePercent: 0.0, feeFixed: 0.0 },
+      shipping: { costPerOrder: 0 },
+      flags: { includeShippingCost: true }
+    };
+
+    const out = await calculateOrderProfit({
+      order,
+      costProfile,
+      cogsService: dummyCogsService,
+      shopifyGET: dummyShopifyGET,
+      unitCostByVariant
+    });
+
+    expect(out.shippingRevenue).toBe(0);
+    expect(out.shippingCost).toBe(0);
+    expect(out.shippingImpact).toBe(0);
+  });
+
+  it("kann Full Refund abbilden (netAfterRefunds=0) und liefert breakEvenRoas=null oder Zahl deterministisch", async () => {
+    const order = makeOrder({
+      id: "1004",
+      total_price: 100,
+      shippingAmount: 5,
+      refunds: [{ transactions: [{ amount: 100 }] }], // full refund
+      line_items: [{ variant_id: 11, quantity: 1 }]
+    });
+
+    const unitCostByVariant = new Map<number, number>([[11, 30]]);
+
+    const costProfile: any = {
+      payment: { feePercent: 0.03, feeFixed: 0.35 },
+      shipping: { costPerOrder: 7 },
+      flags: { includeShippingCost: true }
+    };
+
+    const out = await calculateOrderProfit({
+      order,
+      costProfile,
+      cogsService: dummyCogsService,
+      shopifyGET: dummyShopifyGET,
+      unitCostByVariant
+    });
+
+    expect(out.netAfterRefunds).toBe(0);
+
+    // fees rechnen aktuell trotzdem auf raw net (0) + fixed => 0.35
+    expect(out.paymentFees).toBeCloseTo(0.35, 2);
+
+    // CM = 0 - 30 - 0.35 = -30.35
+    expect(out.contributionMargin).toBeCloseTo(-30.35, 2);
+
+    // breakEvenRoas hängt von deiner metrics-Implementierung ab.
+    expect(out.breakEvenRoas === null || typeof out.breakEvenRoas === "number").toBe(true);
+  });
+
+  it("nutzt unitCostByVariant fast path und ruft cogsService NICHT", async () => {
+    const order = makeOrder({
+      id: "1005",
+      total_price: 40,
+      refunds: [],
+      line_items: [
+        { variant_id: 11, quantity: 2 }, // 2 * 3
+        { variant_id: 22, quantity: 1 }  // 1 * 4
+      ]
+    });
+
+    const unitCostByVariant = new Map<number, number>([
+      [11, 3],
+      [22, 4]
+    ]);
+
+    const costProfile: any = {
+      payment: { feePercent: 0, feeFixed: 0 },
+      shipping: { costPerOrder: 0 },
+      flags: { includeShippingCost: true }
+    };
+
+    const out = await calculateOrderProfit({
+      order,
+      costProfile,
+      cogsService: dummyCogsService,
+      shopifyGET: dummyShopifyGET,
+      unitCostByVariant
+    });
+
+    // cogs = 2*3 + 1*4 = 10
+    expect(out.cogs).toBe(10);
+
+    // CM = net - cogs = 30
+    expect(out.contributionMargin).toBe(30);
+  });
+
+  it("Gift-Card-only Order: operational net=0, fees bleiben real, profit negativ", async () => {
+    const order = makeOrder({
+      id: "GC1",
+      total_price: 100,
+      refunds: [],
+      line_items: [{ variant_id: null, quantity: 1, gift_card: true }] // gift card line item
+    });
+
+    const unitCostByVariant = new Map<number, number>(); // irrelevant
+
+    const costProfile: any = {
+      payment: { feePercent: 0.029, feeFixed: 0.3 },
+      shipping: { costPerOrder: 5 },
+      flags: { includeShippingCost: true }
+    };
+
+    const out = await calculateOrderProfit({
+      order,
+      costProfile,
+      cogsService: dummyCogsService,
+      shopifyGET: dummyShopifyGET,
+      unitCostByVariant
+    });
+
+    expect(out.isGiftCardOnlyOrder).toBe(true);
+    expect(out.giftCardNetSalesExcluded).toBe(100);
+
+    // operational
+    expect(out.grossSales).toBe(0);
+    expect(out.netAfterRefunds).toBe(0);
+
+    // fees are real
+    expect(out.paymentFees).toBeCloseTo(100 * 0.029 + 0.3, 2);
+
+    // CM should be negative (0 - fees)
+    expect(out.contributionMargin).toBeCloseTo(-(100 * 0.029 + 0.3), 2);
+
+    // shipping cost excluded for gift-card-only
+    expect(out.shippingCost).toBe(0);
+  });
+});
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\orderProfit.ts =====
+
+// src/domain/profit/orderProfit.ts
+import { round2 } from "../../utils/money";
+import type { CogsService } from "../cogs";
+import { calcContributionMargin, calcContributionMarginPct, calcBreakEvenRoas } from "../metrics";
+import { extractRefundsFromOrder } from "./refunds";
+import { extractShippingRevenueFromOrder } from "./shipping";
+import { getOrderLineItemFacts, orderIsGiftCardOnly } from "./variants";
+import { isMissingUnitCost } from "./cogsGovernance";
+
+// ✅ Cost Model
+import type { CostProfile } from "../costModel/types";
+
+export async function calculateOrderProfit(params: {
+  order: any;
+
+  costProfile: CostProfile;
+
+  cogsService: CogsService;
+  shopifyGET: (path: string) => Promise<any>;
+
+  // Optional fast path: variantId -> unitCost (override already applied)
+  unitCostByVariant?: Map<number, number | undefined>;
+
+  /**
+   * ✅ Missing-COGS governance:
+   * If a variant is flagged ignoreCogs=true, unitCost can be 0 "by design" and must NOT count as missing.
+   */
+  isIgnoredVariant?: (variantId: number) => boolean;
+}) {
+  const { order, costProfile, cogsService, shopifyGET, isIgnoredVariant } = params;
+
+  const orderId = String(order?.id ?? "");
+
+  // -------------------------
+  // Raw amounts from Shopify
+  // -------------------------
+  const rawGrossSales = Number(order?.total_price || 0);
+  const rawRefunds = extractRefundsFromOrder(order);
+  const rawNetAfterRefunds = rawGrossSales - rawRefunds;
+
+  // -------------------------
+  // SSOT line item facts
+  // -------------------------
+  const facts = getOrderLineItemFacts(order);
+  const variantQty = facts.extractedVariantQty;
+
+  // ✅ Gift card CFO handling (liability):
+  // Gift-card-only orders contribute 0 operational sales, but fees remain real.
+  const isGiftCardOnlyOrder = orderIsGiftCardOnly(order);
+  const giftCardNetSalesExcluded = isGiftCardOnlyOrder ? rawNetAfterRefunds : 0;
+
+  // Operational view (what counts as "sales" for profit)
+  const grossSales = isGiftCardOnlyOrder ? 0 : rawGrossSales;
+  const refunds = isGiftCardOnlyOrder ? 0 : rawRefunds;
+  const netAfterRefunds = isGiftCardOnlyOrder ? 0 : rawNetAfterRefunds;
+
+  let cogs = 0;
+
+  // ✅ Explicit missing COGS flag (for insights/reasons/UX)
+  let hasMissingCogs = false;
+  const missingVariantIds: number[] = [];
+
+  // ✅ NEW: unmapped variants => missing COGS
+  if (facts.hasUnmappedVariants) {
+    hasMissingCogs = true;
+  }
+
+  // Determine unit costs map
+  const unitCostByVariant =
+    params.unitCostByVariant ??
+    (variantQty.length > 0
+      ? await cogsService.computeUnitCostsByVariant(
+          shopifyGET,
+          variantQty.map((x) => x.variantId)
+        )
+      : undefined);
+
+  // Compute COGS & missing detection deterministically when we have variants
+  if (variantQty.length > 0) {
+    if (unitCostByVariant) {
+      for (const li of variantQty) {
+        const unitCost = unitCostByVariant.get(li.variantId);
+
+        // Unknown cost contributes 0, but is governed by missing flag below
+        if (unitCost !== undefined) cogs += li.qty * unitCost;
+
+        if (isMissingUnitCost({ unitCost, variantId: li.variantId, isIgnoredVariant })) {
+          hasMissingCogs = true;
+          missingVariantIds.push(li.variantId);
+        }
+      }
+    } else {
+      // fallback path (older) – does not allow per-variant missing detection
+      cogs = await cogsService.computeCogsForVariants(shopifyGET, variantQty);
+      // unmapped variants guard is already applied via facts.hasUnmappedVariants
+    }
+  }
+
+  // Payment fees (SSOT):
+  // ✅ IMPORTANT: fees are REAL CASH costs => always compute on RAW netAfterRefunds (even for gift-card-only orders)
+  const feePercent = Number(costProfile.payment.feePercent || 0);
+  const feeFixed = Number(costProfile.payment.feeFixed || 0);
+  const paymentFees = rawNetAfterRefunds * feePercent + feeFixed;
+
+  // Core metrics (operational)
+  const contributionMargin = calcContributionMargin({
+    netAfterRefunds,
+    cogs,
+    paymentFees,
+  });
+
+  const contributionMarginPct = calcContributionMarginPct({
+    netAfterRefunds,
+    contributionMargin,
+  });
+
+  const breakEvenRoas = calcBreakEvenRoas({
+    netAfterRefunds,
+    contributionMargin,
+  });
+
+  // Shipping transparency + real-profit adjustment
+  const shippingRevenue = extractShippingRevenueFromOrder(order);
+
+  const includeShippingCost = Boolean(costProfile.flags?.includeShippingCost ?? true);
+
+  // ✅ Gift-card-only orders: treat shipping cost as 0 (no fulfillment/shipping),
+  // even if you have a global per-order shipping fallback.
+  const shippingCostPerOrder =
+    includeShippingCost && !isGiftCardOnlyOrder ? Number(costProfile.shipping.costPerOrder || 0) : 0;
+
+  const shippingCost = shippingCostPerOrder;
+  const shippingImpact = shippingRevenue - shippingCost;
+
+  const profitAfterFees = contributionMargin;
+  const profitAfterShipping = profitAfterFees - shippingCost;
+
+  const profitMarginAfterShippingPct = netAfterRefunds > 0 ? (profitAfterShipping / netAfterRefunds) * 100 : 0;
+
+  // Compatibility fields (existing names)
+  const marginAfterFeesPct = contributionMarginPct;
+
+  return {
+    orderId,
+
+    // ✅ Gift card transparency
+    isGiftCardOnlyOrder,
+    giftCardNetSalesExcluded: round2(giftCardNetSalesExcluded),
+
+    // Operational money fields
+    grossSales: round2(grossSales),
+    refunds: round2(refunds),
+    netAfterRefunds: round2(netAfterRefunds),
+
+    cogs: round2(cogs),
+
+    paymentFees: round2(paymentFees),
+
+    contributionMargin: round2(contributionMargin),
+    contributionMarginPct: round2(contributionMarginPct),
+
+    // ✅ Missing COGS governance (SSOT)
+    hasMissingCogs,
+    missingCogsVariantIds: Array.from(new Set(missingVariantIds)),
+
+    // Shipping
+    shippingRevenue: round2(shippingRevenue),
+    shippingCost: round2(shippingCost),
+    shippingImpact: round2(shippingImpact),
+
+    profitAfterShipping: round2(profitAfterShipping),
+    profitMarginAfterShippingPct: round2(profitMarginAfterShippingPct),
+
+    // Break-even ad spend + ROAS (still based on CM)
+    adSpendBreakEven: round2(contributionMargin),
+    breakEvenRoas: breakEvenRoas === null ? null : round2(breakEvenRoas),
+
+    // OLD (keep)
+    profitAfterFees: round2(profitAfterFees),
+    marginAfterFeesPct: round2(marginAfterFeesPct),
+  };
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\ordersSummary.test.ts =====
+
+import { describe, it, expect } from "vitest";
+import { buildOrdersSummary } from "./ordersSummary";
+import { calcPaymentFees } from "./fees";
+import { calcContributionMargin, calcBreakEvenRoas, calcContributionMarginPct } from "../metrics";
+
+const dummyShopifyGET: any = async () => {
+  throw new Error("shopifyGET should not be called in these tests");
+};
+
+function makeOrder(params: {
+  total_price: number;
+  shippingAmount?: number;
+  refunds?: Array<{ transactions?: Array<{ amount: number | string }> }>;
+  line_items: Array<{ variant_id?: number | null; quantity: number; gift_card?: boolean }>;
+}) {
+  return {
+    total_price: String(params.total_price),
+    total_shipping_price_set:
+      params.shippingAmount === undefined
+        ? undefined
+        : { shop_money: { amount: String(params.shippingAmount) } },
+    refunds: params.refunds ?? [],
+    line_items: params.line_items,
+  };
+}
+
+describe("buildOrdersSummary", () => {
+  it("berechnet gross/refunds/net, shipping totals, fees, CM, breakEven, profitAfterShipping/Ads korrekt", async () => {
+    const orders = [
+      makeOrder({
+        total_price: 110,
+        shippingAmount: 5,
+        refunds: [{ transactions: [{ amount: 20 }] }],
+        line_items: [{ variant_id: 11, quantity: 1 }],
+      }),
+      makeOrder({
+        total_price: 60,
+        shippingAmount: 0,
+        refunds: [],
+        line_items: [{ variant_id: 22, quantity: 2 }],
+      }),
+    ];
+
+    // Total COGS: 1*30 + 2*10 = 50
+    const cogsService: any = {
+      computeUnitCostsByVariant: async (_shopifyGET: any, variantIds: number[]) => {
+        const m = new Map<number, number | undefined>();
+        for (const id of variantIds) {
+          if (id === 11) m.set(id, 30);
+          else if (id === 22) m.set(id, 10);
+          else m.set(id, undefined);
+        }
+        return m;
+      },
+    };
+
+    const costProfile: any = {
+      payment: { feePercent: 0.03, feeFixed: 0.35 },
+      shipping: { costPerOrder: 7 },
+      flags: { includeShippingCost: true },
+      fixedCosts: { allocationMode: "PER_ORDER", daysInMonth: 30, monthlyItems: [] },
+      derived: { fixedCostsMonthlyTotal: 0 },
+    };
+
+    const out = await buildOrdersSummary({
+      shop: "test-shop",
+      days: 30,
+      adSpend: 40,
+      orders,
+      costProfile,
+      cogsService,
+      shopifyGET: dummyShopifyGET,
+    });
+
+    expect(out.shop).toBe("test-shop");
+    expect(out.days).toBe(30);
+    expect(out.count).toBe(2);
+
+    expect(out.grossSales).toBe(170);
+    expect(out.refunds).toBe(20);
+    expect(out.netAfterRefunds).toBe(150);
+
+    // Shipping totals
+    expect(out.shippingRevenue).toBe(5);
+    expect(out.shippingCost).toBe(14); // 7 * 2
+    expect(out.shippingImpact).toBe(5 - 14); // -9
+
+    // Fees
+    const expectedFees = calcPaymentFees({
+      netAfterRefunds: 150,
+      orderCount: 2,
+      feePercent: 0.03,
+      feeFixed: 0.35,
+    });
+    expect(out.paymentFees).toBeCloseTo(expectedFees, 2);
+
+    // CM
+    const expectedCm = calcContributionMargin({
+      netAfterRefunds: 150,
+      cogs: 50,
+      paymentFees: expectedFees,
+    });
+    expect(out.contributionMargin).toBeCloseTo(expectedCm, 2);
+
+    // CM pct
+    const expectedCmPct = calcContributionMarginPct({
+      netAfterRefunds: 150,
+      contributionMargin: expectedCm,
+    });
+    expect(out.contributionMarginPct).toBeCloseTo(expectedCmPct, 2);
+
+    // Break-even ROAS
+    const expectedBe = calcBreakEvenRoas({
+      netAfterRefunds: 150,
+      contributionMargin: expectedCm,
+    });
+    if (expectedBe === null) expect(out.breakEvenRoas).toBeNull();
+    else expect(out.breakEvenRoas).toBeCloseTo(expectedBe, 2);
+
+    // profitAfterShipping = CM - shippingCost
+    expect(out.profitAfterShipping).toBeCloseTo(expectedCm - 14, 2);
+
+    // profitAfterAds = profitAfterFees - adSpend
+    expect(out.adSpend).toBe(40);
+    expect(out.profitAfterFees).toBeCloseTo(expectedCm, 2);
+    expect(out.profitAfterAds).toBeCloseTo(expectedCm - 40, 2);
+
+    // profitAfterAdsAndShipping = profitAfterShipping - adSpend
+    expect(out.profitAfterAdsAndShipping).toBeCloseTo(expectedCm - 14 - 40, 2);
+
+    // sanity margins
+    expect(out.profitMarginAfterShippingPct).toBeCloseTo(((expectedCm - 14) / 150) * 100, 2);
+
+    // Since we provided known unit costs for used variants, missingCogsCount should be 0
+    expect(out.missingCogsCount).toBe(0);
+  });
+
+  it("setzt shippingCost=0 wenn includeShippingCost=false", async () => {
+    const orders = [
+      makeOrder({
+        total_price: 100,
+        shippingAmount: 5,
+        refunds: [],
+        line_items: [{ variant_id: 11, quantity: 1 }],
+      }),
+    ];
+
+    const cogsService: any = {
+      // explicit 0 (note: governance may still treat 0 as missing unless ignored)
+      computeUnitCostsByVariant: async () => new Map<number, number | undefined>([[11, 0]]),
+    };
+
+    const costProfile: any = {
+      payment: { feePercent: 0, feeFixed: 0 },
+      shipping: { costPerOrder: 999 },
+      flags: { includeShippingCost: false },
+      fixedCosts: { allocationMode: "PER_ORDER", daysInMonth: 30, monthlyItems: [] },
+      derived: { fixedCostsMonthlyTotal: 0 },
+    };
+
+    const out = await buildOrdersSummary({
+      shop: "x",
+      days: 7,
+      adSpend: 0,
+      orders,
+      costProfile,
+      cogsService,
+      shopifyGET: dummyShopifyGET,
+    });
+
+    expect(out.shippingRevenue).toBe(5);
+    expect(out.shippingCost).toBe(0);
+    expect(out.shippingImpact).toBe(5);
+    expect(out.profitAfterShipping).toBe(out.profitAfterFees);
+
+    // ✅ With your current governance (Option C): unitCost===0 counts as missing unless ignored.
+    // In this test we do NOT pass isIgnoredVariant => missingCogsCount should be 1.
+    expect(out.missingCogsCount).toBe(1);
+  });
+
+  it("markiert Missing COGS wenn unitCost unbekannt ist (undefined)", async () => {
+    const orders = [
+      makeOrder({
+        total_price: 100,
+        shippingAmount: 0,
+        refunds: [],
+        line_items: [{ variant_id: 11, quantity: 1 }],
+      }),
+    ];
+
+    const cogsService: any = {
+      // unknown cost => missing
+      computeUnitCostsByVariant: async () => new Map<number, number | undefined>(), // no entry for 11
+    };
+
+    const costProfile: any = {
+      payment: { feePercent: 0, feeFixed: 0 },
+      shipping: { costPerOrder: 0 },
+      flags: { includeShippingCost: true },
+      fixedCosts: { allocationMode: "PER_ORDER", daysInMonth: 30, monthlyItems: [] },
+      derived: { fixedCostsMonthlyTotal: 0 },
+    };
+
+    const out = await buildOrdersSummary({
+      shop: "x",
+      days: 7,
+      adSpend: 0,
+      orders,
+      costProfile,
+      cogsService,
+      shopifyGET: dummyShopifyGET,
+    });
+
+    expect(out.missingCogsCount).toBe(1);
+  });
+
+  it("markiert Missing COGS wenn LineItems relevant sind, aber keine Variant-IDs extrahierbar sind (unmapped variants)", async () => {
+    const orders = [
+      makeOrder({
+        total_price: 100,
+        shippingAmount: 0,
+        refunds: [],
+        // variant_id missing/null => extractor yields 0 => filtered out => extractedVariantQty empty
+        line_items: [{ variant_id: null, quantity: 1 }],
+      }),
+    ];
+
+    const cogsService: any = {
+      computeUnitCostsByVariant: async () => new Map<number, number | undefined>(),
+    };
+
+    const costProfile: any = {
+      payment: { feePercent: 0, feeFixed: 0 },
+      shipping: { costPerOrder: 0 },
+      flags: { includeShippingCost: true },
+      fixedCosts: { allocationMode: "PER_ORDER", daysInMonth: 30, monthlyItems: [] },
+      derived: { fixedCostsMonthlyTotal: 0 },
+    };
+
+    const out = await buildOrdersSummary({
+      shop: "x",
+      days: 7,
+      adSpend: 0,
+      orders,
+      costProfile,
+      cogsService,
+      shopifyGET: dummyShopifyGET,
+    });
+
+    expect(out.missingCogsCount).toBe(1);
+  });
+
+  it("Gift-Card-only Orders werden aus operational net sales excluded, fees bleiben real", async () => {
+    const orders = [
+      makeOrder({
+        total_price: 100,
+        shippingAmount: 0,
+        refunds: [],
+        line_items: [{ variant_id: null, quantity: 1, gift_card: true }],
+      }),
+      makeOrder({
+        total_price: 200,
+        shippingAmount: 0,
+        refunds: [],
+        line_items: [{ variant_id: 11, quantity: 1 }],
+      }),
+    ];
+
+    const cogsService: any = {
+      computeUnitCostsByVariant: async () => new Map<number, number | undefined>([[11, 50]]),
+    };
+
+    const costProfile: any = {
+      payment: { feePercent: 0.029, feeFixed: 0.3 },
+      shipping: { costPerOrder: 5 },
+      flags: { includeShippingCost: true },
+      fixedCosts: { allocationMode: "PER_ORDER", daysInMonth: 30, monthlyItems: [] },
+      derived: { fixedCostsMonthlyTotal: 0 },
+    };
+
+    const out = await buildOrdersSummary({
+      shop: "x",
+      days: 30,
+      adSpend: 0,
+      orders,
+      costProfile,
+      cogsService,
+      shopifyGET: dummyShopifyGET,
+    });
+
+    // operational totals: only the non-gift-card order counts
+    expect(out.giftCardOrdersCount).toBe(1);
+    expect(out.giftCardNetSalesExcluded).toBe(100);
+
+    expect(out.grossSales).toBe(200);
+    expect(out.netAfterRefunds).toBe(200);
+
+    // fees should include gift-card payment too (raw total = 300)
+    const expectedFees = 300 * 0.029 + 2 * 0.3;
+    expect(out.paymentFees).toBeCloseTo(expectedFees, 2);
+
+    // COGS only for the real product order
+    expect(out.cogs).toBe(50);
+  });
+});
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\ordersSummary.ts =====
+
+// src/domain/profit/ordersSummary.ts
+import { round2 } from "../../utils/money";
+import type { CogsService, VariantQty } from "../cogs";
+import { calcContributionMargin, calcContributionMarginPct, calcBreakEvenRoas } from "../metrics";
+import { extractRefundsFromOrder } from "./refunds";
+import { extractShippingRevenueFromOrder } from "./shipping";
+import { calcPaymentFees } from "./fees";
+import { extractVariantQtyFromOrder, getOrderLineItemFacts, orderIsGiftCardOnly } from "./variants";
+import { isMissingUnitCost } from "./cogsGovernance";
+
+// ✅ Cost Model
+import type { CostProfile } from "../costModel/types";
+
+export async function buildOrdersSummary(params: {
+  shop: string;
+  days: number;
+  adSpend: number;
+  orders: any[];
+
+  costProfile: CostProfile & { derived?: { fixedCostsMonthlyTotal?: number } };
+
+  cogsService: CogsService;
+  shopifyGET: (path: string) => Promise<any>;
+
+  unitCostByVariant?: Map<number, number | undefined>;
+
+  /**
+   * ✅ Missing-COGS governance:
+   * ignoreCogs=true means cost is not required (also allows 0/undefined without "missing").
+   */
+  isIgnoredVariant?: (variantId: number) => boolean;
+}) {
+  const { shop, days, adSpend, orders, costProfile, cogsService, shopifyGET, isIgnoredVariant } = params;
+
+  const count = orders.length;
+
+  // -------------------------
+  // Gift card CFO handling (summary)
+  // -------------------------
+  let giftCardOrdersCount = 0;
+  let giftCardNetSalesExcluded = 0;
+
+  // Operational totals exclude gift-card-only orders
+  const grossSales = orders.reduce((sum: number, o: any) => {
+    return sum + (orderIsGiftCardOnly(o) ? 0 : Number(o.total_price || 0));
+  }, 0);
+
+  const refunds = orders.reduce((sum: number, o: any) => {
+    return sum + (orderIsGiftCardOnly(o) ? 0 : extractRefundsFromOrder(o));
+  }, 0);
+
+  // RAW totals for fees (fees are real cash costs, also for gift cards)
+  const rawGrossSalesTotal = orders.reduce((sum: number, o: any) => sum + Number(o.total_price || 0), 0);
+  const rawRefundsTotal = orders.reduce((sum: number, o: any) => sum + extractRefundsFromOrder(o), 0);
+  const rawNetAfterRefundsTotal = rawGrossSalesTotal - rawRefundsTotal;
+
+  for (const o of orders) {
+    if (orderIsGiftCardOnly(o)) {
+      giftCardOrdersCount += 1;
+      const rawNet = Number(o.total_price || 0) - extractRefundsFromOrder(o);
+      giftCardNetSalesExcluded += rawNet;
+    }
+  }
+
+  const netAfterRefunds = grossSales - refunds;
+
+  // Shipping revenue (for transparency) — still show what customers paid
+  const shippingRevenue = orders.reduce((sum: number, o: any) => sum + extractShippingRevenueFromOrder(o), 0);
+
+  const includeShippingCost = Boolean(costProfile.flags?.includeShippingCost ?? true);
+  const shippingCostPerOrder = includeShippingCost ? Number(costProfile.shipping.costPerOrder || 0) : 0;
+
+  // ✅ For shipping COST allocation we exclude gift-card-only orders (no fulfillment).
+  const nonGiftCardOrderCount = orders.reduce((n: number, o: any) => n + (orderIsGiftCardOnly(o) ? 0 : 1), 0);
+  const shippingCost = shippingCostPerOrder * nonGiftCardOrderCount;
+
+  const shippingImpact = shippingRevenue - shippingCost;
+
+  // --- COGS ---
+  const allLineItems: VariantQty[] = [];
+  for (const o of orders) allLineItems.push(...extractVariantQtyFromOrder(o));
+
+  const variantIds = allLineItems.map((x) => x.variantId).filter((x) => Number.isFinite(x) && x > 0);
+
+  const unitCostByVariant =
+    params.unitCostByVariant ?? (await cogsService.computeUnitCostsByVariant(shopifyGET, variantIds));
+
+  // Compute Σ(qty * unitCost). Unknown costs contribute 0 here.
+  let cogs = 0;
+  for (const li of allLineItems) {
+    const unitCost = unitCostByVariant.get(li.variantId);
+    if (unitCost !== undefined) cogs += li.qty * unitCost;
+  }
+
+  // ✅ Missing COGS count (per order):
+  // - orders with unmapped variants
+  // - OR orders with at least one non-ignored variant where unit cost is missing by governance
+  // Gift-card-only orders are naturally excluded (no relevant line items).
+  let missingCogsCount = 0;
+
+  for (const o of orders) {
+    // skip gift-card-only orders (no COGS required)
+    if (orderIsGiftCardOnly(o)) continue;
+
+    const facts = getOrderLineItemFacts(o);
+
+    // unmapped variants => missing COGS
+    if (facts.hasUnmappedVariants) {
+      missingCogsCount += 1;
+      continue;
+    }
+
+    const vqs = facts.extractedVariantQty;
+
+    let hasMissing = false;
+    for (const li of vqs) {
+      const unitCost = unitCostByVariant.get(li.variantId);
+
+      if (isMissingUnitCost({ unitCost, variantId: li.variantId, isIgnoredVariant })) {
+        hasMissing = true;
+        break;
+      }
+    }
+
+    if (hasMissing) missingCogsCount += 1;
+  }
+
+  const missingCogsRatePct = count > 0 ? round2((missingCogsCount / count) * 100) : 0;
+
+  const MISSING_COGS_OK_PCT = 3; // align with healthConfig.missingCogsRatePct.ok
+  const isCogsReliable = missingCogsRatePct <= MISSING_COGS_OK_PCT;
+
+  const feePercent = Number(costProfile.payment.feePercent || 0);
+  const feeFixed = Number(costProfile.payment.feeFixed || 0);
+
+  // ✅ Fees are real cash costs => always use RAW net total (includes gift-card-only sales)
+  const paymentFees = calcPaymentFees({
+    netAfterRefunds: rawNetAfterRefundsTotal,
+    orderCount: count,
+    feePercent,
+    feeFixed,
+  });
+
+  // Operational contribution margin excludes gift card sales, but subtracts real fees
+  const contributionMargin = calcContributionMargin({
+    netAfterRefunds,
+    cogs,
+    paymentFees,
+  });
+
+  const contributionMarginPct = calcContributionMarginPct({
+    netAfterRefunds,
+    contributionMargin,
+  });
+
+  const breakEvenRoas = calcBreakEvenRoas({
+    netAfterRefunds,
+    contributionMargin,
+  });
+
+  const profitAfterFees = contributionMargin;
+  const profitAfterShipping = profitAfterFees - shippingCost;
+  const profitMarginAfterShippingPct = netAfterRefunds > 0 ? (profitAfterShipping / netAfterRefunds) * 100 : 0;
+
+  const profitAfterAds = round2(profitAfterFees - adSpend);
+  const profitAfterAdsAndShipping = round2(profitAfterShipping - adSpend);
+
+  // ✅ FIXED COSTS (derived from SSOT cost profile)
+  const fixedCostsMonthlyTotal = round2(Number(costProfile.derived?.fixedCostsMonthlyTotal ?? 0));
+  const daysInMonth = Math.max(1, Number(costProfile.fixedCosts?.daysInMonth ?? 30));
+  const fixedCostsAllocatedInPeriod = round2(fixedCostsMonthlyTotal * (Math.max(1, Number(days)) / daysInMonth));
+
+  const fixedAllocMode = costProfile.fixedCosts?.allocationMode ?? "PER_ORDER";
+  const fixedCostPerOrder =
+    fixedAllocMode === "PER_ORDER" && count > 0 ? round2(fixedCostsAllocatedInPeriod / count) : 0;
+
+  const profitAfterFixedCosts = round2(profitAfterAdsAndShipping - fixedCostsAllocatedInPeriod);
+  const profitMarginAfterFixedCostsPct =
+    netAfterRefunds > 0 ? round2((profitAfterFixedCosts / netAfterRefunds) * 100) : 0;
+
+  const fixedCostRatioPct = netAfterRefunds > 0 ? round2((fixedCostsAllocatedInPeriod / netAfterRefunds) * 100) : 0;
+
+  const operatingProfit = profitAfterFixedCosts;
+  const operatingMarginPct = profitMarginAfterFixedCostsPct;
+
+  const variableCostsInPeriod = round2(cogs + paymentFees + shippingCost);
+  const requiredNetSalesForBreakEvenWithFixedCosts = round2(variableCostsInPeriod + fixedCostsAllocatedInPeriod);
+
+  const breakEvenAdSpendWithFixedCosts = round2(Math.max(0, profitAfterShipping - fixedCostsAllocatedInPeriod));
+  const breakEvenRoasWithFixedCosts =
+    adSpend > 0 && breakEvenAdSpendWithFixedCosts > 0 ? round2(netAfterRefunds / breakEvenAdSpendWithFixedCosts) : null;
+
+  const grossProfit = netAfterRefunds - cogs;
+  const grossMarginPct = netAfterRefunds > 0 ? (grossProfit / netAfterRefunds) * 100 : 0;
+
+  const profitMarginAfterFeesPct = netAfterRefunds > 0 ? round2((profitAfterFees / netAfterRefunds) * 100) : 0;
+  const profitMarginAfterAdsPct = netAfterRefunds > 0 ? round2((profitAfterAds / netAfterRefunds) * 100) : 0;
+  const profitMarginAfterAdsAndShippingPct =
+    netAfterRefunds > 0 ? round2((profitAfterAdsAndShipping / netAfterRefunds) * 100) : 0;
+
+  const targetProfitPct = 10;
+  const adSpendForTarget = round2(profitAfterFees - (targetProfitPct / 100) * netAfterRefunds);
+  const targetRoasFor10PctProfit = adSpendForTarget > 0 ? round2(netAfterRefunds / adSpendForTarget) : null;
+
+  const adSpendForTargetAfterShipping = round2(profitAfterShipping - (targetProfitPct / 100) * netAfterRefunds);
+  const targetRoasFor10PctProfitAfterShipping =
+    adSpendForTargetAfterShipping > 0 ? round2(netAfterRefunds / adSpendForTargetAfterShipping) : null;
+
+  return {
+    shop,
+    days,
+    count,
+
+    // ✅ gift card transparency (CFO)
+    giftCardOrdersCount,
+    giftCardNetSalesExcluded: round2(giftCardNetSalesExcluded),
+
+    missingCogsCount,
+    missingCogsRatePct,
+    isCogsReliable,
+
+    grossSales: round2(grossSales),
+    refunds: round2(refunds),
+    netAfterRefunds: round2(netAfterRefunds),
+
+    shippingRevenue: round2(shippingRevenue),
+    shippingCost: round2(shippingCost),
+    shippingImpact: round2(shippingImpact),
+
+    cogs: round2(cogs),
+    grossProfit: round2(grossProfit),
+    grossMarginPct: round2(grossMarginPct),
+
+    paymentFees: round2(paymentFees),
+
+    contributionMargin: round2(contributionMargin),
+    contributionMarginPct: round2(contributionMarginPct),
+
+    adSpendBreakEven: round2(contributionMargin),
+    breakEvenRoas: breakEvenRoas === null ? null : round2(breakEvenRoas),
+
+    profitAfterShipping: round2(profitAfterShipping),
+    profitMarginAfterShippingPct: round2(profitMarginAfterShippingPct),
+
+    profitAfterFees: round2(profitAfterFees),
+    profitMarginAfterFeesPct: round2(profitMarginAfterFeesPct),
+
+    adSpend: round2(adSpend),
+    profitAfterAds,
+    profitMarginAfterAdsPct,
+
+    profitAfterAdsAndShipping: round2(profitAfterAdsAndShipping),
+    profitMarginAfterAdsAndShippingPct,
+
+    fixedCostsMonthlyTotal,
+    fixedCostsAllocatedInPeriod,
+    fixedCostPerOrder,
+
+    operatingProfit,
+    operatingMarginPct,
+    fixedCostRatioPct,
+
+    profitAfterFixedCosts,
+    profitMarginAfterFixedCostsPct,
+
+    requiredNetSalesForBreakEvenWithFixedCosts,
+    breakEvenAdSpendWithFixedCosts,
+    breakEvenRoasWithFixedCosts,
+
+    targetRoasFor10PctProfit,
+    targetRoasFor10PctProfitAfterShipping,
+  };
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\productsProfit.test.ts =====
+
+import { describe, it, expect, vi } from "vitest";
+
+// ---- Ads Mock (damit der Test deterministisch ist, egal wie ads.ts intern implementiert ist)
+vi.mock("./ads", () => {
+  function safeDiv(a: number, b: number) {
+    return b > 0 ? a / b : 0;
+  }
+
+  return {
+    allocateAdSpendForProducts: ({ rows, adSpend }: any) => {
+      const totalNet = rows.reduce((s: number, r: any) => s + Number(r.netSales || 0), 0);
+      return rows.map((r: any) => {
+        const share = safeDiv(Number(r.netSales || 0), totalNet);
+        return { ...r, allocatedAdSpend: Number(adSpend) * share };
+      });
+    },
+    computeProfitAfterAds: ({ profitBeforeAds, allocatedAdSpend }: any) => {
+      return Number(profitBeforeAds || 0) - Number(allocatedAdSpend || 0);
+    }
+  };
+});
+
+import { buildProductsProfit } from "./productsProfit";
+
+const dummyShopifyGET: any = async () => {
+  throw new Error("shopifyGET should not be called in these tests");
+};
+
+function makeOrder(params: {
+  total_price: number;
+  refunds?: Array<{ transactions?: Array<{ amount: number | string }> }>;
+  line_items: Array<{
+    product_id: number;
+    variant_id: number;
+    quantity: number;
+    price: number;
+    title: string;
+    variant_title?: string;
+    sku?: string;
+  }>;
+}) {
+  return {
+    total_price: String(params.total_price),
+    refunds: params.refunds ?? [],
+    line_items: params.line_items
+  };
+}
+
+describe("buildProductsProfit", () => {
+  it("aggregiert qty/gross/net korrekt, allokiert refunds & fees deterministisch, und matched totals", async () => {
+    // Orders:
+    // Order1: 2 lines à 50 (gross=100), refund=20 => refund alloc 10/10 => net 40/40
+    // Order2: 1 line A à 60, refund=0 => net 60
+    const orders = [
+      makeOrder({
+        total_price: 110, // includes e.g. shipping revenue, but allocation uses line_items only
+        refunds: [{ transactions: [{ amount: 20 }] }],
+        line_items: [
+          { product_id: 101, variant_id: 1, quantity: 1, price: 50, title: "Prod A", variant_title: "A1", sku: "SKU-A" },
+          { product_id: 202, variant_id: 2, quantity: 1, price: 50, title: "Prod B", variant_title: "B1", sku: "SKU-B" }
+        ]
+      }),
+      makeOrder({
+        total_price: 60,
+        refunds: [],
+        line_items: [{ product_id: 101, variant_id: 1, quantity: 1, price: 60, title: "Prod A", variant_title: "A1", sku: "SKU-A" }]
+      })
+    ];
+
+    // Dummy COGS by variant (deterministisch)
+    const cogsService: any = {
+      computeCogsByVariant: async (_shopifyGET: any, _variantQty: any[]) => {
+        return new Map<number, number>([
+          [1, 30], // variant A
+          [2, 25]  // variant B
+        ]);
+      }
+    };
+
+    const costProfile: any = {
+      payment: { feePercent: 0.03, feeFixed: 0.35 },
+      shipping: { costPerOrder: 7 },
+      flags: { includeShippingCost: true }
+    };
+
+    const res = await buildProductsProfit({
+      shop: "test-shop",
+      days: 30,
+      orders,
+      costProfile,
+      cogsService,
+      shopifyGET: dummyShopifyGET
+      // adSpend not set
+    });
+
+    expect(res.shop).toBe("test-shop");
+    expect(res.days).toBe(30);
+    expect(res.orderCount).toBe(2);
+
+    // Totals:
+    // grossSalesTotal = 110 + 60 = 170
+    // refundsTotal = 20
+    // netAfterRefundsTotal = 150
+    // paymentFeesTotal = 150*0.03 + 2*0.35 = 4.5 + 0.7 = 5.2
+    expect(res.totals.totalNetSales).toBe(140); // from line-item net allocation: A 100 + B 40
+    expect(res.totals.paymentFeesTotal).toBeCloseTo(5.2, 2);
+    expect(res.totals.uniqueVariants).toBe(2);
+
+    // Products are sorted ascending by profitAfterFees (no ads)
+    expect(res.products.length).toBe(2);
+    const p0 = res.products[0];
+    const p1 = res.products[1];
+
+    // Variant B should be first (lower profit)
+    expect(p0.variantId).toBe(2);
+    expect(p0.productId).toBe(202);
+    expect(p0.qty).toBe(1);
+    expect(p0.grossSales).toBe(50);
+    expect(p0.refundsAllocated).toBe(10);
+    expect(p0.netSales).toBe(40);
+    expect(p0.cogs).toBe(25);
+
+    // Fee allocation by netSales share:
+    // totalNet=140; fees=5.2
+    // B fee = 40/140*5.2 = 1.485714... -> 1.49 after round2
+    expect(p0.paymentFeesAllocated).toBeCloseTo(1.49, 2);
+
+    // profitAfterFees = 40 - 25 - 1.485714... = 13.514285... -> 13.51
+    expect(p0.profitAfterFees).toBeCloseTo(13.51, 2);
+    expect(p0.marginPct).toBeCloseTo((13.514285714285714 / 40) * 100, 2);
+
+    // Variant A second
+    expect(p1.variantId).toBe(1);
+    expect(p1.productId).toBe(101);
+    expect(p1.qty).toBe(2);
+    expect(p1.grossSales).toBe(110);
+    expect(p1.refundsAllocated).toBe(10);
+    expect(p1.netSales).toBe(100);
+    expect(p1.cogs).toBe(30);
+
+    // A fee = 100/140*5.2 = 3.714285... -> 3.71
+    expect(p1.paymentFeesAllocated).toBeCloseTo(3.71, 2);
+
+    // profitAfterFees = 100 - 30 - 3.714285... = 66.285714... -> 66.29
+    expect(p1.profitAfterFees).toBeCloseTo(66.29, 2);
+
+    // Highlights
+    expect(res.highlights.topWinners[0].variantId).toBe(1);
+    expect(res.highlights.topLosers[0].variantId).toBe(2);
+
+    // Missing COGS (keiner, da beide >0)
+    expect(res.highlights.missingCogsCount).toBe(0);
+    expect(res.highlights.missingCogs.length).toBe(0);
+  });
+
+  it("wenn adSpend gesetzt ist: allocatedAdSpend + profitAfterAds werden gesetzt und Sorting/Highlights nutzen profitAfterAds", async () => {
+    const orders = [
+      makeOrder({
+        total_price: 110,
+        refunds: [{ transactions: [{ amount: 20 }] }],
+        line_items: [
+          { product_id: 101, variant_id: 1, quantity: 1, price: 50, title: "Prod A" },
+          { product_id: 202, variant_id: 2, quantity: 1, price: 50, title: "Prod B" }
+        ]
+      }),
+      makeOrder({
+        total_price: 60,
+        refunds: [],
+        line_items: [{ product_id: 101, variant_id: 1, quantity: 1, price: 60, title: "Prod A" }]
+      })
+    ];
+
+    const cogsService: any = {
+      computeCogsByVariant: async () =>
+        new Map<number, number>([
+          [1, 30],
+          [2, 25]
+        ])
+    };
+
+    const costProfile: any = {
+      payment: { feePercent: 0.03, feeFixed: 0.35 },
+      shipping: { costPerOrder: 7 },
+      flags: { includeShippingCost: true }
+    };
+
+    const res = await buildProductsProfit({
+      shop: "test-shop",
+      days: 30,
+      orders,
+      costProfile,
+      cogsService,
+      shopifyGET: dummyShopifyGET,
+      adSpend: 14
+    });
+
+    expect(res.totals.adSpend).toBe(14);
+
+    // Sortierung jetzt via profitAfterAds (weil gesetzt)
+    expect(res.products.length).toBe(2);
+
+    const b = res.products[0]; // loser
+    const a = res.products[1]; // winner
+
+    expect(b.variantId).toBe(2);
+    expect(a.variantId).toBe(1);
+
+    // totalNetSales = 140, adSpend=14 -> A gets 10, B gets 4 (nach unserem Mock)
+    expect(b.allocatedAdSpend).toBeCloseTo(4, 2);
+    expect(a.allocatedAdSpend).toBeCloseTo(10, 2);
+
+    // profitAfterAds = profitAfterFees - allocatedAdSpend
+    expect(b.profitAfterAds).toBeCloseTo(b.profitAfterFees - (b.allocatedAdSpend ?? 0), 2);
+    expect(a.profitAfterAds).toBeCloseTo(a.profitAfterFees - (a.allocatedAdSpend ?? 0), 2);
+
+    // Highlights nutzen profitAfterAds
+    expect(res.highlights.topWinners[0].variantId).toBe(1);
+    expect(res.highlights.topLosers[0].variantId).toBe(2);
+  });
+});
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\productsProfit.ts =====
+
+// src/domain/profit/productsProfit.ts
+import { round2 } from "../../utils/money";
+import type { CogsService, VariantQty } from "../cogs";
+import { extractRefundsFromOrder } from "./refunds";
+import { allocateAdSpendForProducts, computeProfitAfterAds } from "./ads";
+
+// ✅ NEW
+import type { CostProfile } from "../costModel/types";
+
+export async function buildProductsProfit(params: {
+  shop: string;
+  days: number;
+  orders: any[];
+
+  costProfile: CostProfile;
+
+  cogsService: CogsService;
+  shopifyGET: (path: string) => Promise<any>;
+
+  // optional
+  adSpend?: number;
+}) {
+  const { shop, days, orders, costProfile, cogsService, shopifyGET } = params;
+
+  const orderCount = orders.length;
+
+  const feePercent = Number(costProfile.payment.feePercent || 0);
+  const feeFixed = Number(costProfile.payment.feeFixed || 0);
+
+  // Fee base = netAfterRefunds (includes shipping revenue)
+  const grossSalesTotal = orders.reduce((s: number, o: any) => s + Number(o.total_price || 0), 0);
+  const refundsTotal = orders.reduce((s: number, o: any) => s + extractRefundsFromOrder(o), 0);
+  const netAfterRefundsTotal = grossSalesTotal - refundsTotal;
+
+  type Agg = {
+    productId: number;
+    variantId: number;
+    title: string;
+    variantTitle?: string;
+    sku?: string;
+
+    qty: number;
+    grossSales: number;
+    refundsAllocated: number;
+    netSales: number;
+
+    cogs: number;
+
+    paymentFeesAllocated: number;
+    profitAfterFees: number;
+    marginPct: number;
+
+    allocatedAdSpend?: number;
+    profitAfterAds?: number;
+  };
+
+  const byKey = new Map<string, Agg>();
+
+  const allLineItems: Array<{
+    productId: number;
+    variantId: number;
+    qty: number;
+    lineGross: number;
+    title: string;
+    variantTitle?: string;
+    sku?: string;
+  }> = [];
+
+  for (const o of orders) {
+    const items = o.line_items ?? [];
+
+    const orderLines = items
+      .map((li: any) => {
+        const productId = Number(li.product_id || 0);
+        const variantId = Number(li.variant_id || 0);
+        const qty = Number(li.quantity || 0);
+
+        const unitPrice = Number(li.price || 0);
+        const lineGross = unitPrice * qty;
+
+        return {
+          productId,
+          variantId,
+          qty,
+          lineGross,
+          title: String(li.title ?? ""),
+          variantTitle: li.variant_title ? String(li.variant_title) : undefined,
+          sku: li.sku ? String(li.sku) : undefined,
+        };
+      })
+      .filter((x: any) => x.variantId > 0 && x.qty > 0);
+
+    const orderLinesGross = orderLines.reduce((s: number, x: any) => s + x.lineGross, 0);
+    const orderRefund = extractRefundsFromOrder(o);
+
+    for (const li of orderLines) {
+      const refundAlloc = orderLinesGross > 0 ? (li.lineGross / orderLinesGross) * orderRefund : 0;
+      const net = li.lineGross - refundAlloc;
+
+      const key = `${li.productId}:${li.variantId}`;
+      const cur =
+        byKey.get(key) ??
+        ({
+          productId: li.productId,
+          variantId: li.variantId,
+          title: li.title,
+          variantTitle: li.variantTitle,
+          sku: li.sku,
+
+          qty: 0,
+          grossSales: 0,
+          refundsAllocated: 0,
+          netSales: 0,
+
+          cogs: 0,
+
+          paymentFeesAllocated: 0,
+          profitAfterFees: 0,
+          marginPct: 0,
+        } as Agg);
+
+      cur.qty += li.qty;
+      cur.grossSales += li.lineGross;
+      cur.refundsAllocated += refundAlloc;
+      cur.netSales += net;
+
+      byKey.set(key, cur);
+
+      allLineItems.push({
+        productId: li.productId,
+        variantId: li.variantId,
+        qty: li.qty,
+        lineGross: li.lineGross,
+        title: li.title,
+        variantTitle: li.variantTitle,
+        sku: li.sku,
+      });
+    }
+  }
+
+  // COGS compute once per variant aggregation
+  const variantQtyForCogs: VariantQty[] = allLineItems.map((x) => ({
+    variantId: x.variantId,
+    qty: x.qty,
+  }));
+
+  const cogsByVariant = await cogsService.computeCogsByVariant(shopifyGET, variantQtyForCogs);
+
+  for (const p of byKey.values()) {
+    p.cogs = cogsByVariant.get(p.variantId) ?? 0;
+  }
+
+  // Allocate payment fees by netSales share
+  const totalNetSales = Array.from(byKey.values()).reduce((s, p) => s + p.netSales, 0);
+
+  const paymentFeesTotal = netAfterRefundsTotal * feePercent + orderCount * feeFixed;
+
+  for (const p of byKey.values()) {
+    const feeAlloc = totalNetSales > 0 ? (p.netSales / totalNetSales) * paymentFeesTotal : 0;
+    p.paymentFeesAllocated = feeAlloc;
+
+    const profitAfterFees = p.netSales - p.cogs - feeAlloc;
+    p.profitAfterFees = profitAfterFees;
+
+    p.marginPct = p.netSales > 0 ? (profitAfterFees / p.netSales) * 100 : 0;
+  }
+
+  // Ad spend allocation (optional)
+  const spend = Number(params.adSpend ?? 0);
+  if (Number.isFinite(spend) && spend > 0) {
+    const allocated = allocateAdSpendForProducts({
+      rows: Array.from(byKey.values()).map((p) => ({ ...p })),
+      adSpend: spend,
+    });
+
+    byKey.clear();
+    for (const p of allocated) {
+      p.allocatedAdSpend = p.allocatedAdSpend ?? 0;
+      p.profitAfterAds = computeProfitAfterAds({
+        profitBeforeAds: p.profitAfterFees,
+        allocatedAdSpend: p.allocatedAdSpend,
+      });
+      byKey.set(`${p.productId}:${p.variantId}`, p);
+    }
+  }
+
+  const products = Array.from(byKey.values())
+    .map((p) => ({
+      productId: p.productId,
+      variantId: p.variantId,
+      title: p.title,
+      variantTitle: p.variantTitle ?? null,
+      sku: p.sku ?? null,
+
+      qty: p.qty,
+
+      grossSales: round2(p.grossSales),
+      refundsAllocated: round2(p.refundsAllocated),
+      netSales: round2(p.netSales),
+
+      cogs: round2(p.cogs),
+
+      paymentFeesAllocated: round2(p.paymentFeesAllocated),
+      profitAfterFees: round2(p.profitAfterFees),
+      marginPct: round2(p.marginPct),
+
+      allocatedAdSpend: p.allocatedAdSpend !== undefined ? round2(p.allocatedAdSpend) : undefined,
+      profitAfterAds: p.profitAfterAds !== undefined ? round2(p.profitAfterAds) : undefined,
+    }))
+    .sort((a: any, b: any) => {
+      const av = a.profitAfterAds ?? a.profitAfterFees;
+      const bv = b.profitAfterAds ?? b.profitAfterFees;
+      return av - bv;
+    });
+
+  const topWinners = [...products]
+    .sort((a: any, b: any) => (b.profitAfterAds ?? b.profitAfterFees) - (a.profitAfterAds ?? a.profitAfterFees))
+    .slice(0, 3);
+
+  const topLosers = [...products]
+    .sort((a: any, b: any) => (a.profitAfterAds ?? a.profitAfterFees) - (b.profitAfterAds ?? b.profitAfterFees))
+    .slice(0, 3);
+
+  const missingCogs = products
+    .filter((p: any) => p.cogs === 0 && p.qty > 0 && p.netSales > 0)
+    .map((p: any) => ({
+      productId: p.productId,
+      variantId: p.variantId,
+      title: p.title,
+      variantTitle: p.variantTitle,
+      sku: p.sku,
+      qty: p.qty,
+      netSales: p.netSales,
+    }));
+
+  return {
+    shop,
+    days,
+    orderCount,
+    totals: {
+      totalNetSales: round2(totalNetSales),
+      paymentFeesTotal: round2(paymentFeesTotal),
+      uniqueVariants: products.length,
+      adSpend: Number.isFinite(spend) ? round2(spend) : undefined,
+    },
+    highlights: {
+      topWinners,
+      topLosers,
+      missingCogsCount: missingCogs.length,
+      missingCogs: missingCogs.slice(0, 20),
+    },
+    products,
+  };
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\refunds.ts =====
+
+// src/domain/profit/refunds.ts
+export function extractRefundsFromOrder(order: any): number {
+  const rs = order.refunds ?? [];
+  const refundTx = rs.flatMap((r: any) => r.transactions ?? []);
+  return refundTx.reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\shipping.ts =====
+
+// src/domain/profit/shipping.ts
+
+/**
+ * Shipping Revenue = what the customer paid for shipping (already included in order.total_price).
+ * We extract it explicitly for transparency + later insights.
+ */
+export function extractShippingRevenueFromOrder(order: any): number {
+  // Most reliable
+  const a = order?.total_shipping_price_set?.shop_money?.amount;
+  if (a !== undefined && a !== null) return Number(a) || 0;
+
+  // Sometimes presentment_money exists
+  const b = order?.total_shipping_price_set?.presentment_money?.amount;
+  if (b !== undefined && b !== null) return Number(b) || 0;
+
+  // Fallbacks (older fields)
+  const c = order?.total_shipping_price;
+  if (c !== undefined && c !== null) return Number(c) || 0;
+
+  // Sometimes only shipping_lines exist
+  const lines = order?.shipping_lines ?? [];
+  if (Array.isArray(lines) && lines.length > 0) {
+    const sum = lines.reduce((s: number, l: any) => s + Number(l?.price || 0), 0);
+    return Number(sum) || 0;
+  }
+
+  return 0;
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\variants.test.ts =====
+
+// src/domain/profit/variants.test.ts
+import { describe, it, expect } from "vitest";
+import { getOrderLineItemFacts } from "./variants";
+
+describe("getOrderLineItemFacts (SSOT) - unmapped variants governance", () => {
+  it("flags unmapped when relevant line items exist but no variant ids can be extracted (gift_card='false' string)", () => {
+    const order = {
+      id: "1002",
+      line_items: [
+        {
+          quantity: 1,
+          variant_id: null,
+          gift_card: "false", // <- critical: must NOT be treated as true
+        },
+      ],
+    };
+
+    const facts = getOrderLineItemFacts(order);
+
+    expect(facts.rawLineItemsCount).toBe(1);
+    expect(facts.relevantLineItemsCount).toBe(1);
+    expect(facts.extractedVariantQty.length).toBe(0);
+    expect(facts.hasUnmappedVariants).toBe(true);
+  });
+
+  it("does NOT flag unmapped when only gift cards exist (gift_card=true)", () => {
+    const order = {
+      id: "gc-only",
+      line_items: [
+        {
+          quantity: 1,
+          variant_id: null,
+          gift_card: true,
+        },
+      ],
+    };
+
+    const facts = getOrderLineItemFacts(order);
+
+    expect(facts.rawLineItemsCount).toBe(1);
+    expect(facts.relevantLineItemsCount).toBe(0);
+    expect(facts.extractedVariantQty.length).toBe(0);
+    expect(facts.hasUnmappedVariants).toBe(false);
+  });
+
+  it("extracts variant ids from GraphQL shape (gid) and is not unmapped", () => {
+    const order = {
+      id: "gql",
+      lineItems: {
+        edges: [
+          {
+            node: {
+              quantity: 2,
+              variant: { id: "gid://shopify/ProductVariant/44862408622134" },
+              giftCard: false,
+            },
+          },
+        ],
+      },
+    };
+
+    const facts = getOrderLineItemFacts(order);
+
+    expect(facts.relevantLineItemsCount).toBe(1);
+    expect(facts.extractedVariantQty).toEqual([{ variantId: 44862408622134, qty: 2 }]);
+    expect(facts.hasUnmappedVariants).toBe(false);
+  });
+});
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profit\variants.ts =====
+
+// src/domain/profit/variants.ts
+import type { VariantQty } from "../cogs";
+
+function toNum(v: any): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseGidToId(maybeGid: any): number {
+  // Shopify GID example: gid://shopify/ProductVariant/44862408622134
+  if (typeof maybeGid !== "string") return toNum(maybeGid);
+  const m = maybeGid.match(/(\d+)\s*$/);
+  return m ? toNum(m[1]) : 0;
+}
+
+function push(out: VariantQty[], variantId: number, qty: number) {
+  if (variantId > 0 && qty > 0) out.push({ variantId, qty });
+}
+
+/**
+ * Strict boolean parsing:
+ * - true / "true" / 1 / "1" => true
+ * - false / "false" / 0 / "0" / undefined / null => false
+ * Anything else => false (safe default)
+ */
+function parseStrictBool(v: any): boolean {
+  if (v === true) return true;
+  if (v === false || v == null) return false;
+
+  if (typeof v === "number") return v === 1;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1") return true;
+    if (s === "false" || s === "0" || s === "") return false;
+    return false; // safe default
+  }
+
+  return false;
+}
+
+function isGiftCardLike(li: any): boolean {
+  // REST: gift_card
+  // GraphQL (sometimes): giftCard
+  return parseStrictBool(li?.gift_card ?? li?.giftCard ?? false);
+}
+
+/**
+ * Canonical "Facts" about line items on an order (SSOT for downstream missing-COGS governance + gift-card handling).
+ * - rawLineItemsCount: how many line items exist on the order payload
+ * - relevantLineItemsCount: how many line items should require COGS (gift cards excluded)
+ * - extractedVariantQty: mapped variants with qty > 0 (gift cards excluded)
+ * - hasUnmappedVariants: relevant line items exist but no usable variant ids could be extracted
+ * - giftCardLineItemsCount: how many gift-card line items exist
+ */
+export type OrderLineItemFacts = {
+  rawLineItemsCount: number;
+  relevantLineItemsCount: number;
+  extractedVariantQty: VariantQty[];
+  hasUnmappedVariants: boolean;
+
+  giftCardLineItemsCount: number;
+};
+
+function normalizeArrayLineItems(
+  arr: any[],
+  out: VariantQty[],
+  counts: { raw: number; relevant: number; gift: number }
+) {
+  for (const li of arr ?? []) {
+    counts.raw += 1;
+
+    const giftCard = isGiftCardLike(li);
+    if (giftCard) {
+      counts.gift += 1;
+      continue; // gift cards do NOT require COGS and must not affect extraction
+    }
+
+    counts.relevant += 1;
+
+    const variantId =
+      toNum(li?.variant_id) ||
+      toNum(li?.variantId) ||
+      parseGidToId(li?.variant?.id) ||
+      parseGidToId(li?.variantId) ||
+      0;
+
+    const qty = toNum(li?.quantity) || toNum(li?.qty) || toNum(li?.currentQuantity) || 0;
+
+    push(out, variantId, qty);
+  }
+}
+
+function normalizeGraphqlLineItems(conn: any, out: VariantQty[], counts: { raw: number; relevant: number; gift: number }) {
+  const edges = conn?.edges ?? [];
+  for (const e of edges) {
+    const node = e?.node ?? e ?? {};
+
+    counts.raw += 1;
+
+    const giftCard = isGiftCardLike(node);
+    if (giftCard) {
+      counts.gift += 1;
+      continue;
+    }
+
+    counts.relevant += 1;
+
+    const variantId = parseGidToId(node?.variant?.id) || toNum(node?.variantId) || 0;
+    const qty = toNum(node?.quantity) || toNum(node?.currentQuantity) || toNum(node?.qty) || 0;
+
+    push(out, variantId, qty);
+  }
+}
+
+function normalizeGraphqlLineItemsNodes(
+  conn: any,
+  out: VariantQty[],
+  counts: { raw: number; relevant: number; gift: number }
+) {
+  const nodes = conn?.nodes ?? [];
+  for (const node of nodes) {
+    counts.raw += 1;
+
+    const giftCard = isGiftCardLike(node);
+    if (giftCard) {
+      counts.gift += 1;
+      continue;
+    }
+
+    counts.relevant += 1;
+
+    const variantId = parseGidToId(node?.variant?.id) || toNum(node?.variantId) || 0;
+    const qty = toNum(node?.quantity) || toNum(node?.currentQuantity) || toNum(node?.qty) || 0;
+
+    push(out, variantId, qty);
+  }
+}
+
+function dedupeVariantQty(out: VariantQty[]): VariantQty[] {
+  // Merge duplicate variantIds (same variant appears multiple times)
+  const agg = new Map<number, number>();
+  for (const x of out) agg.set(x.variantId, (agg.get(x.variantId) ?? 0) + x.qty);
+  return Array.from(agg.entries()).map(([variantId, qty]) => ({ variantId, qty }));
+}
+
+export function extractVariantQtyFromOrder(order: any): VariantQty[] {
+  return getOrderLineItemFacts(order).extractedVariantQty;
+}
+
+/**
+ * Helper: does the order contain any gift card line items?
+ */
+export function orderHasGiftCardLineItems(order: any): boolean {
+  return getOrderLineItemFacts(order).giftCardLineItemsCount > 0;
+}
+
+/**
+ * Helper: gift-card-only order = has gift-card line items AND has no relevant (non-gift) line items.
+ */
+export function orderIsGiftCardOnly(order: any): boolean {
+  const facts = getOrderLineItemFacts(order);
+  return facts.giftCardLineItemsCount > 0 && facts.relevantLineItemsCount === 0;
+}
+
+/**
+ * SSOT: use this for "unmapped variants" detection (line items exist but variants cannot be extracted).
+ * Deterministic across REST/camelCase/GraphQL shapes.
+ */
+export function getOrderLineItemFacts(order: any): OrderLineItemFacts {
+  const out: VariantQty[] = [];
+  const counts = { raw: 0, relevant: 0, gift: 0 };
+
+  // GraphQL nodes shape (common in Shopify GraphQL)
+  if (order?.lineItems?.nodes) normalizeGraphqlLineItemsNodes(order.lineItems, out, counts);
+  if (order?.line_items?.nodes) normalizeGraphqlLineItemsNodes(order.line_items, out, counts);
+
+  // REST shape
+  if (Array.isArray(order?.line_items)) normalizeArrayLineItems(order.line_items, out, counts);
+
+  // Some code/fixtures use camelCase
+  if (Array.isArray(order?.lineItems)) normalizeArrayLineItems(order.lineItems, out, counts);
+
+  // GraphQL connection shape
+  if (order?.lineItems?.edges) normalizeGraphqlLineItems(order.lineItems, out, counts);
+  if (order?.line_items?.edges) normalizeGraphqlLineItems(order.line_items, out, counts);
+
+  const extractedVariantQty = dedupeVariantQty(out);
+
+  // ✅ Invariante für "unmapped variants":
+  // Wenn relevante Items existieren, aber keine Variant IDs extrahiert werden konnten => missing
+  const hasUnmappedVariants = counts.relevant > 0 && extractedVariantQty.length === 0;
+
+  return {
+    rawLineItemsCount: counts.raw,
+    relevantLineItemsCount: counts.relevant,
+    extractedVariantQty,
+    hasUnmappedVariants,
+    giftCardLineItemsCount: counts.gift,
+  };
+}
+
+// Backwards compatible helper (still useful sometimes)
+export function getRawLineItemCount(order: any): number {
+  return getOrderLineItemFacts(order).rawLineItemsCount;
+}
+
+// New helper (explicit)
+export function getRelevantLineItemCount(order: any): number {
+  return getOrderLineItemFacts(order).relevantLineItemsCount;
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\metrics.ts =====
+
+// src/domain/metrics.ts
+import { round2 } from "../utils/money";
+
+export function calcContributionMargin(params: {
+  netAfterRefunds: number;
+  cogs: number;
+  paymentFees: number;
+}): number {
+  const net = Number(params.netAfterRefunds || 0);
+  const cogs = Number(params.cogs || 0);
+  const fees = Number(params.paymentFees || 0);
+  return net - cogs - fees;
+}
+
+export function calcContributionMarginPct(params: {
+  netAfterRefunds: number;
+  contributionMargin: number;
+}): number {
+  const net = Number(params.netAfterRefunds || 0);
+  const cm = Number(params.contributionMargin || 0);
+  if (net <= 0) return 0;
+  return (cm / net) * 100;
+}
+
+/**
+ * Break-even ROAS = Revenue / Max Ad Spend
+ * Max Ad Spend (break-even) = Contribution Margin (before ads)
+ *
+ * Returns null when break-even spend <= 0 (can’t break even).
+ */
+export function calcBreakEvenRoas(params: {
+  netAfterRefunds: number;
+  contributionMargin: number;
+}): number | null {
+  const net = Number(params.netAfterRefunds || 0);
+  const cm = Number(params.contributionMargin || 0);
+  if (net <= 0) return null;
+  if (cm <= 0) return null;
+  return net / cm;
+}
+
+export function roundMetric(n: number): number {
+  return round2(n);
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\profitDaily.ts =====
+
+// src/domain/profitDaily.ts
+import { round2 } from "../utils/money";
+import { calcBreakEvenRoas, calcContributionMarginPct } from "./metrics";
+import { allocateFixedCostsForOrders, type FixedCostsMode } from "./profit/fixedCosts";
+
+export function buildDailyProfit(params: {
+  shop: string;
+  days: number;
+
+  /**
+   * Optional: if provided and per-order fixed costs are missing,
+   * we can allocate them deterministically via SSOT allocator.
+   */
+  fixedCostsAllocatedInPeriod?: number;
+  fixedCostsAllocationMode?: "PER_ORDER" | "BY_NET_SALES" | "BY_DAYS";
+
+  orderProfits: Array<{
+    createdAt: string | null;
+    grossSales: number;
+    refunds: number;
+    netAfterRefunds: number;
+    cogs: number;
+    paymentFees: number;
+
+    profitAfterFees: number;
+    contributionMargin?: number;
+
+    shippingRevenue?: number;
+    shippingCost?: number;
+    profitAfterShipping?: number;
+
+    allocatedAdSpend?: number;
+    profitAfterAds?: number;
+    profitAfterAdsAndShipping?: number;
+
+    // preferred (already computed upstream)
+    fixedCostAllocated?: number;
+    profitAfterFixedCosts?: number;
+
+    // ✅ optional (from route): enables per-day missing cogs stats
+    hasMissingCogs?: boolean;
+  }>;
+}) {
+  const { shop, days } = params;
+
+  type Row = (typeof params.orderProfits)[number];
+
+  function toDayKey(createdAt: string | null): string {
+    if (!createdAt) return "unknown";
+    return String(createdAt).slice(0, 10);
+  }
+
+  /**
+   * ✅ SSOT: ensure fixedCostAllocated exists for all rows when possible.
+   * We only do this if upstream did NOT already provide per-order fixed costs for ALL rows.
+   */
+  function ensureFixedCosts(rows: Row[]): Array<Row & { fixedCostAllocated: number; profitAfterFixedCosts: number }> {
+    const total = Number(params.fixedCostsAllocatedInPeriod ?? 0);
+    const modeRaw = params.fixedCostsAllocationMode ?? "PER_ORDER";
+
+    // ✅ IMPORTANT: consider upstream "complete" only if ALL rows have fixedCostAllocated.
+    const hasAllFixed = rows.length > 0 && rows.every((r) => r.fixedCostAllocated !== undefined);
+    const canAllocate = Number.isFinite(total) && total > 0;
+
+    // If upstream already allocated for all rows, just normalize + compute profitAfterFixedCosts if missing.
+    // If BY_DAYS: we keep deterministic and do not invent calendar rows here.
+    if (hasAllFixed || !canAllocate || modeRaw === "BY_DAYS") {
+      return rows.map((r) => {
+        const fc = round2(Number(r.fixedCostAllocated ?? 0));
+        const pBase = Number(r.profitAfterAdsAndShipping ?? 0);
+        const pAfterFixed =
+          r.profitAfterFixedCosts !== undefined ? Number(r.profitAfterFixedCosts ?? 0) : pBase - fc;
+
+        return {
+          ...r,
+          fixedCostAllocated: fc,
+          profitAfterFixedCosts: round2(pAfterFixed),
+        };
+      });
+    }
+
+    // Otherwise allocate deterministically via SSOT allocator
+    const mode: FixedCostsMode = modeRaw === "BY_NET_SALES" ? "BY_NET_SALES" : "PER_ORDER";
+
+    const allocated = allocateFixedCostsForOrders({
+      rows,
+      fixedCostsTotal: total,
+      mode,
+    });
+
+    return allocated.map((r: any) => {
+      const fc = round2(Number(r.fixedCostAllocated ?? 0));
+      const pBase = Number(r.profitAfterAdsAndShipping ?? 0);
+      const pAfterFixed =
+        r.profitAfterFixedCosts !== undefined ? Number(r.profitAfterFixedCosts ?? 0) : pBase - fc;
+
+      return {
+        ...r,
+        fixedCostAllocated: fc,
+        profitAfterFixedCosts: round2(pAfterFixed),
+      };
+    });
+  }
+
+  const rows = ensureFixedCosts(params.orderProfits);
+
+  type DayAgg = {
+    day: string;
+    orders: number;
+
+    grossSales: number;
+    refunds: number;
+    netAfterRefunds: number;
+
+    shippingRevenue: number;
+    shippingCost: number;
+    shippingImpact: number;
+
+    cogs: number;
+    paymentFees: number;
+
+    contributionMargin: number;
+    contributionMarginPct: number;
+
+    profitAfterShipping: number;
+    profitMarginAfterShippingPct: number;
+
+    profitAfterFees: number;
+
+    allocatedAdSpend: number;
+    profitAfterAds: number;
+    profitMarginAfterAdsPct: number;
+
+    profitAfterAdsAndShipping: number;
+    profitMarginAfterAdsAndShippingPct: number;
+
+    fixedCostsAllocated: number;
+    profitAfterFixedCosts: number;
+    profitMarginAfterFixedCostsPct: number;
+
+    // ✅ optional: missing cogs diagnostics (order count + rate)
+    missingCogsOrders: number;
+    missingCogsRatePct: number;
+
+    adSpendBreakEven: number;
+    breakEvenRoas: number | null;
+  };
+
+  const byDay = new Map<
+    string,
+    Omit<
+      DayAgg,
+      | "contributionMarginPct"
+      | "breakEvenRoas"
+      | "profitMarginAfterShippingPct"
+      | "profitMarginAfterAdsPct"
+      | "profitMarginAfterAdsAndShippingPct"
+      | "profitMarginAfterFixedCostsPct"
+      | "missingCogsRatePct"
+    >
+  >();
+
+  for (const o of rows) {
+    const day = toDayKey(o.createdAt);
+
+    const cur =
+      byDay.get(day) ?? {
+        day,
+        orders: 0,
+        grossSales: 0,
+        refunds: 0,
+        netAfterRefunds: 0,
+
+        shippingRevenue: 0,
+        shippingCost: 0,
+        shippingImpact: 0,
+
+        cogs: 0,
+        paymentFees: 0,
+
+        contributionMargin: 0,
+        profitAfterFees: 0,
+
+        profitAfterShipping: 0,
+
+        allocatedAdSpend: 0,
+        profitAfterAds: 0,
+        profitAfterAdsAndShipping: 0,
+
+        fixedCostsAllocated: 0,
+        profitAfterFixedCosts: 0,
+
+        missingCogsOrders: 0,
+
+        adSpendBreakEven: 0,
+      };
+
+    cur.orders += 1;
+
+    cur.grossSales += Number(o.grossSales || 0);
+    cur.refunds += Number(o.refunds || 0);
+    cur.netAfterRefunds += Number(o.netAfterRefunds || 0);
+
+    cur.cogs += Number(o.cogs || 0);
+    cur.paymentFees += Number(o.paymentFees || 0);
+
+    const cm = Number(o.contributionMargin ?? o.profitAfterFees ?? 0);
+    cur.contributionMargin += cm;
+    cur.profitAfterFees += Number(o.profitAfterFees || 0);
+
+    const sRev = Number(o.shippingRevenue ?? 0);
+    const sCost = Number(o.shippingCost ?? 0);
+    cur.shippingRevenue += sRev;
+    cur.shippingCost += sCost;
+    cur.shippingImpact += sRev - sCost;
+
+    const pAfterShip =
+      o.profitAfterShipping !== undefined
+        ? Number(o.profitAfterShipping || 0)
+        : Number(o.profitAfterFees || 0) - sCost;
+
+    cur.profitAfterShipping += pAfterShip;
+
+    const aSpend = Number(o.allocatedAdSpend ?? 0);
+    cur.allocatedAdSpend += aSpend;
+
+    const pAfterAds =
+      o.profitAfterAds !== undefined ? Number(o.profitAfterAds || 0) : Number(o.profitAfterFees || 0) - aSpend;
+
+    const pAfterAdsAndShip =
+      o.profitAfterAdsAndShipping !== undefined ? Number(o.profitAfterAdsAndShipping || 0) : pAfterShip - aSpend;
+
+    cur.profitAfterAds += pAfterAds;
+    cur.profitAfterAdsAndShipping += pAfterAdsAndShip;
+
+    cur.fixedCostsAllocated += Number(o.fixedCostAllocated ?? 0);
+    cur.profitAfterFixedCosts += Number(o.profitAfterFixedCosts ?? 0);
+
+    if (o.hasMissingCogs) cur.missingCogsOrders += 1;
+
+    cur.adSpendBreakEven += cm;
+
+    byDay.set(day, cur);
+  }
+
+  const daysArr: DayAgg[] = Array.from(byDay.values())
+    .map((d) => {
+      const net = d.netAfterRefunds;
+      const cm = d.contributionMargin;
+
+      const cmPct = calcContributionMarginPct({ netAfterRefunds: net, contributionMargin: cm });
+      const beRoas = calcBreakEvenRoas({ netAfterRefunds: net, contributionMargin: cm });
+
+      const profitMarginAfterShippingPct = net > 0 ? (d.profitAfterShipping / net) * 100 : 0;
+      const profitMarginAfterAdsPct = net > 0 ? (d.profitAfterAds / net) * 100 : 0;
+      const profitMarginAfterAdsAndShippingPct = net > 0 ? (d.profitAfterAdsAndShipping / net) * 100 : 0;
+      const profitMarginAfterFixedCostsPct = net > 0 ? (d.profitAfterFixedCosts / net) * 100 : 0;
+
+      const missingCogsRatePct = d.orders > 0 ? (d.missingCogsOrders / d.orders) * 100 : 0;
+
+      return {
+        day: d.day,
+        orders: d.orders,
+
+        grossSales: round2(d.grossSales),
+        refunds: round2(d.refunds),
+        netAfterRefunds: round2(d.netAfterRefunds),
+
+        shippingRevenue: round2(d.shippingRevenue),
+        shippingCost: round2(d.shippingCost),
+        shippingImpact: round2(d.shippingImpact),
+
+        cogs: round2(d.cogs),
+        paymentFees: round2(d.paymentFees),
+
+        contributionMargin: round2(d.contributionMargin),
+        contributionMarginPct: round2(cmPct),
+
+        profitAfterShipping: round2(d.profitAfterShipping),
+        profitMarginAfterShippingPct: round2(profitMarginAfterShippingPct),
+
+        profitAfterFees: round2(d.profitAfterFees),
+
+        allocatedAdSpend: round2(d.allocatedAdSpend),
+        profitAfterAds: round2(d.profitAfterAds),
+        profitMarginAfterAdsPct: round2(profitMarginAfterAdsPct),
+
+        profitAfterAdsAndShipping: round2(d.profitAfterAdsAndShipping),
+        profitMarginAfterAdsAndShippingPct: round2(profitMarginAfterAdsAndShippingPct),
+
+        fixedCostsAllocated: round2(d.fixedCostsAllocated),
+        profitAfterFixedCosts: round2(d.profitAfterFixedCosts),
+        profitMarginAfterFixedCostsPct: round2(profitMarginAfterFixedCostsPct),
+
+        missingCogsOrders: d.missingCogsOrders,
+        missingCogsRatePct: round2(missingCogsRatePct),
+
+        adSpendBreakEven: round2(d.adSpendBreakEven),
+        breakEvenRoas: beRoas === null ? null : round2(beRoas),
+      };
+    })
+    .sort((a, b) => {
+      if (a.day === "unknown") return 1;
+      if (b.day === "unknown") return -1;
+      return a.day.localeCompare(b.day);
+    });
+
+  const totals = daysArr.reduce(
+    (acc, d) => {
+      acc.orders += d.orders;
+      acc.grossSales += d.grossSales;
+      acc.refunds += d.refunds;
+      acc.netAfterRefunds += d.netAfterRefunds;
+
+      acc.shippingRevenue += d.shippingRevenue;
+      acc.shippingCost += d.shippingCost;
+      acc.shippingImpact += d.shippingImpact;
+
+      acc.cogs += d.cogs;
+      acc.paymentFees += d.paymentFees;
+
+      acc.contributionMargin += d.contributionMargin;
+      acc.profitAfterFees += d.profitAfterFees;
+
+      acc.profitAfterShipping += d.profitAfterShipping;
+
+      acc.allocatedAdSpend += d.allocatedAdSpend;
+      acc.profitAfterAds += d.profitAfterAds;
+      acc.profitAfterAdsAndShipping += d.profitAfterAdsAndShipping;
+
+      acc.fixedCostsAllocated += d.fixedCostsAllocated;
+      acc.profitAfterFixedCosts += d.profitAfterFixedCosts;
+
+      acc.missingCogsOrders += d.missingCogsOrders;
+
+      return acc;
+    },
+    {
+      orders: 0,
+      grossSales: 0,
+      refunds: 0,
+      netAfterRefunds: 0,
+
+      shippingRevenue: 0,
+      shippingCost: 0,
+      shippingImpact: 0,
+
+      cogs: 0,
+      paymentFees: 0,
+      contributionMargin: 0,
+      profitAfterFees: 0,
+
+      profitAfterShipping: 0,
+
+      allocatedAdSpend: 0,
+      profitAfterAds: 0,
+      profitAfterAdsAndShipping: 0,
+
+      fixedCostsAllocated: 0,
+      profitAfterFixedCosts: 0,
+
+      missingCogsOrders: 0,
+    }
+  );
+
+  const totalsCmPct = calcContributionMarginPct({
+    netAfterRefunds: totals.netAfterRefunds,
+    contributionMargin: totals.contributionMargin,
+  });
+
+  const totalsBeRoas = calcBreakEvenRoas({
+    netAfterRefunds: totals.netAfterRefunds,
+    contributionMargin: totals.contributionMargin,
+  });
+
+  const totalsProfitMarginAfterShippingPct =
+    totals.netAfterRefunds > 0 ? (totals.profitAfterShipping / totals.netAfterRefunds) * 100 : 0;
+
+  const totalsProfitMarginAfterAdsPct =
+    totals.netAfterRefunds > 0 ? (totals.profitAfterAds / totals.netAfterRefunds) * 100 : 0;
+
+  const totalsProfitMarginAfterAdsAndShippingPct =
+    totals.netAfterRefunds > 0 ? (totals.profitAfterAdsAndShipping / totals.netAfterRefunds) * 100 : 0;
+
+  const totalsProfitMarginAfterFixedCostsPct =
+    totals.netAfterRefunds > 0 ? (totals.profitAfterFixedCosts / totals.netAfterRefunds) * 100 : 0;
+
+  const totalsMissingCogsRatePct = totals.orders > 0 ? (totals.missingCogsOrders / totals.orders) * 100 : 0;
+
+  return {
+    shop,
+    days,
+    totals: {
+      orders: totals.orders,
+      grossSales: round2(totals.grossSales),
+      refunds: round2(totals.refunds),
+      netAfterRefunds: round2(totals.netAfterRefunds),
+
+      shippingRevenue: round2(totals.shippingRevenue),
+      shippingCost: round2(totals.shippingCost),
+      shippingImpact: round2(totals.shippingImpact),
+
+      cogs: round2(totals.cogs),
+      paymentFees: round2(totals.paymentFees),
+
+      contributionMargin: round2(totals.contributionMargin),
+      contributionMarginPct: round2(totalsCmPct),
+      adSpendBreakEven: round2(totals.contributionMargin),
+      breakEvenRoas: totalsBeRoas === null ? null : round2(totalsBeRoas),
+
+      profitAfterShipping: round2(totals.profitAfterShipping),
+      profitMarginAfterShippingPct: round2(totalsProfitMarginAfterShippingPct),
+
+      allocatedAdSpend: round2(totals.allocatedAdSpend),
+      profitAfterAds: round2(totals.profitAfterAds),
+      profitMarginAfterAdsPct: round2(totalsProfitMarginAfterAdsPct),
+
+      profitAfterAdsAndShipping: round2(totals.profitAfterAdsAndShipping),
+      profitMarginAfterAdsAndShippingPct: round2(totalsProfitMarginAfterAdsAndShippingPct),
+
+      fixedCostsAllocated: round2(totals.fixedCostsAllocated),
+      profitAfterFixedCosts: round2(totals.profitAfterFixedCosts),
+      profitMarginAfterFixedCostsPct: round2(totalsProfitMarginAfterFixedCostsPct),
+
+      // ✅ optional diagnostics
+      missingCogsOrders: totals.missingCogsOrders,
+      missingCogsRatePct: round2(totalsMissingCogsRatePct),
+
+      profitAfterFees: round2(totals.profitAfterFees),
+    },
+    daily: daysArr,
+  };
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\domain\insights\adsAllocation.ts =====
+
+// src/domain/insights/adsAllocation.ts
+import { round2 } from "../../utils/money";
+
+type Key = number | string;
+
+function num(x: any): number {
+  const n = Number(x ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function clamp0(n: number): number {
+  return n < 0 ? 0 : n;
+}
+
+// Deterministic allocation that sums exactly to totalAdSpend (within cent rounding)
+// Allocate by weight, round to cents, then distribute rounding drift by highest weight.
+export function allocateAdSpend<T>(params: {
+  rows: T[];
+  getId: (row: T) => Key;
+  getWeight: (row: T) => number; // e.g. net sales
+  totalAdSpend: number;
+}): Map<Key, number> {
+  const { rows, getId, getWeight } = params;
+
+  const total = round2(num(params.totalAdSpend));
+  const out = new Map<Key, number>();
+  if (total <= 0 || rows.length === 0) return out;
+
+  const weights = rows.map((r) => clamp0(num(getWeight(r))));
+  const sumW = weights.reduce((s, w) => s + w, 0);
+  if (sumW <= 0) return out;
+
+  const allocs = rows.map((r, i) => {
+    const raw = (weights[i] / sumW) * total;
+    return { id: getId(r), weight: weights[i], alloc: round2(raw) };
+  });
+
+  const allocatedSum = round2(allocs.reduce((s, a) => s + a.alloc, 0));
+  const diff = round2(total - allocatedSum); // +/- cents
+
+  if (diff !== 0) {
+    const order = allocs
+      .map((a, idx) => ({ idx, weight: a.weight }))
+      .sort((a, b) => b.weight - a.weight)
+      .map((x) => x.idx);
+
+    const step = diff > 0 ? 0.01 : -0.01;
+    const steps = Math.round(Math.abs(diff) / 0.01);
+
+    for (let k = 0; k < steps; k++) {
+      const idx = order[k % order.length];
+      allocs[idx].alloc = round2(allocs[idx].alloc + step);
+    }
+  }
+
+  for (const a of allocs) out.set(a.id, a.alloc);
+  return out;
+}
+
+export function enrichOrdersWithAds<T extends { id: Key }>(params: {
+  orders: T[];
+  totalAdSpend: number;
+  // Default weight: netAfterRefunds
+  weight?: (o: T) => number;
+  // Default base profit: contributionMargin
+  baseProfit?: (o: T) => number;
+  // Optional: if provided, we compute profitAfterAdsAndShipping using profitAfterShipping
+  profitAfterShipping?: (o: T) => number;
+}) {
+  const {
+    orders,
+    totalAdSpend,
+    weight = (o) => num((o as any).netAfterRefunds),
+    baseProfit = (o) => num((o as any).contributionMargin),
+    profitAfterShipping,
+  } = params;
+
+  const alloc = allocateAdSpend({
+    rows: orders,
+    getId: (o) => o.id,
+    getWeight: (o) => weight(o),
+    totalAdSpend,
+  });
+
+  return orders.map((o) => {
+    const adSpendAllocated = round2(alloc.get(o.id) ?? 0);
+
+    const cm = baseProfit(o);
+    const profitAfterAds = round2(cm - adSpendAllocated);
+
+    const out: any = { ...o, adSpendAllocated, profitAfterAds };
+
+    if (profitAfterShipping) {
+      const pas = num(profitAfterShipping(o));
+      out.profitAfterAdsAndShipping = round2(pas - adSpendAllocated);
+    }
+
+    return out as T & {
+      adSpendAllocated: number;
+      profitAfterAds: number;
+      profitAfterAdsAndShipping?: number;
+    };
+  });
+}
+
+export function enrichProductsWithAds<T extends { productId: number; variantId: number }>(params: {
+  products: T[];
+  totalAdSpend: number;
+  // Default weight: netSales
+  weight?: (p: T) => number;
+  // Default base profit: profitAfterFees
+  baseProfit?: (p: T) => number;
+}) {
+  const {
+    products,
+    totalAdSpend,
+    weight = (p) => num((p as any).netSales),
+    baseProfit = (p) => num((p as any).profitAfterFees),
+  } = params;
+
+  // Key = `${productId}:${variantId}`
+  const rows = products.map((p) => ({
+    key: `${p.productId}:${p.variantId}`,
+    p,
+  }));
+
+  const alloc = allocateAdSpend({
+    rows,
+    getId: (r) => r.key,
+    getWeight: (r) => weight(r.p),
+    totalAdSpend,
+  });
+
+  return products.map((p) => {
+    const key = `${p.productId}:${p.variantId}`;
+    const adSpendAllocated = round2(alloc.get(key) ?? 0);
+
+    const profit = baseProfit(p);
+    const profitAfterAds = round2(profit - adSpendAllocated);
+
+    return {
+      ...(p as any),
+      adSpendAllocated,
+      profitAfterAds,
+    } as T & { adSpendAllocated: number; profitAfterAds: number };
+  });
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\routes\shopify\costModel.route.ts =====
+
+// src/routes/shopify/costModel.route.ts
+import type { FastifyInstance } from "fastify";
+import type { ShopifyCtx } from "./ctx";
+
+import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve";
+import type { CostProfileOverrides } from "../../domain/costModel/types";
+
+function mergeOverrides(a?: CostProfileOverrides, b?: CostProfileOverrides): CostProfileOverrides | undefined {
+  if (!a && !b) return undefined;
+
+  const out: CostProfileOverrides = {};
+
+  if (a?.payment || b?.payment) out.payment = { ...(a?.payment ?? {}), ...(b?.payment ?? {}) };
+  if (a?.shipping || b?.shipping) out.shipping = { ...(a?.shipping ?? {}), ...(b?.shipping ?? {}) };
+  if (a?.ads || b?.ads) out.ads = { ...(a?.ads ?? {}), ...(b?.ads ?? {}) };
+  if (a?.flags || b?.flags) out.flags = { ...(a?.flags ?? {}), ...(b?.flags ?? {}) };
+  if (a?.fixedCosts || b?.fixedCosts) out.fixedCosts = { ...(a?.fixedCosts ?? {}), ...(b?.fixedCosts ?? {}) };
+
+  if (!out.payment && !out.shipping && !out.ads && !out.flags && !out.fixedCosts) return undefined;
+  return out;
+}
+/**
+ * SECURITY:
+ * Never return resolvedFrom/config/env in API responses (can contain secrets like SHOPIFY_ADMIN_TOKEN).
+ * Only return resolved values + fingerprint.
+ */
+function sanitizeResolvedProfile(resolved: any) {
+  return {
+    payment: resolved?.payment,
+    shipping: resolved?.shipping,
+    ads: resolved?.ads,
+fixedCosts: {
+  daysInMonth: resolved?.fixedCosts?.daysInMonth ?? null,
+  allocationMode: resolved?.fixedCosts?.allocationMode ?? null,
+  monthlyItems: resolved?.fixedCosts?.monthlyItems ?? [],
+},
+derived: {
+  fixedCostsMonthlyTotal: resolved?.derived?.fixedCostsMonthlyTotal ?? 0,
+},
+    flags: resolved?.flags,
+    meta: {
+      fingerprint: resolved?.meta?.fingerprint ?? null,
+    },
+  };
+}
+
+export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
+  // GET: show persisted overrides + resolved profile from config+persisted
+  app.get("/api/cost-model", async (_req, reply) => {
+    try {
+      await ctx.costModelOverridesStore.ensureLoaded();
+      const persisted = ctx.costModelOverridesStore.getOverridesSync();
+
+      const resolved = resolveCostProfile({
+        config: (app as any).config ?? {},
+        overrides: persisted,
+      });
+
+      return reply.send({
+        shop: ctx.shop,
+        persistedOverrides: persisted ?? null,
+        persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+        resolvedProfile: sanitizeResolvedProfile(resolved),
+      });
+    } catch (err: any) {
+      return reply.status(500).send({ error: "Unexpected error", details: String(err?.message ?? err) });
+    }
+  });
+
+  // PUT: replace persisted overrides
+  app.put("/api/cost-model", async (req, reply) => {
+    try {
+      const body: any = (req as any).body ?? {};
+      
+      const overrides = costOverridesFromAny(body);
+
+      if (!overrides) {
+        return reply.status(400).send({
+          error: "No valid overrides provided",
+          hint: "Provide at least one of: feePercent, feeFixed, shippingCostPerOrder, includeShippingCost, adAllocationMode",
+        });
+      }
+
+      await ctx.costModelOverridesStore.setOverrides(overrides);
+
+      const resolved = resolveCostProfile({
+        config: (app as any).config ?? {},
+        overrides,
+      });
+
+      return reply.send({
+        ok: true,
+        shop: ctx.shop,
+        persistedOverrides: overrides,
+        persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+        resolvedProfile: sanitizeResolvedProfile(resolved),
+      });
+    } catch (err: any) {
+      return reply.status(500).send({ error: "Unexpected error", details: String(err?.message ?? err) });
+    }
+  });
+
+  // PATCH: merge into persisted overrides (partial update)
+  app.patch("/api/cost-model", async (req, reply) => {
+    try {
+      const body: any = (req as any).body ?? {};
+      
+      const patch = costOverridesFromAny(body);
+
+      if (!patch) {
+        return reply.status(400).send({
+          error: "No valid overrides provided",
+          hint: "Provide at least one of: feePercent, feeFixed, shippingCostPerOrder, includeShippingCost, adAllocationMode",
+        });
+      }
+
+      await ctx.costModelOverridesStore.ensureLoaded();
+      const current = ctx.costModelOverridesStore.getOverridesSync();
+
+      const merged = mergeOverrides(current, patch) ?? {};
+      await ctx.costModelOverridesStore.setOverrides(merged);
+
+      const resolved = resolveCostProfile({
+        config: (app as any).config ?? {},
+        overrides: merged,
+      });
+
+      return reply.send({
+        ok: true,
+        shop: ctx.shop,
+        persistedOverrides: merged,
+        persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+        resolvedProfile: sanitizeResolvedProfile(resolved),
+      });
+    } catch (err: any) {
+      return reply.status(500).send({ error: "Unexpected error", details: String(err?.message ?? err) });
+    }
+  });
+
+  // DELETE: clear persisted overrides
+  app.delete("/api/cost-model", async (_req, reply) => {
+    try {
+      await ctx.costModelOverridesStore.clear();
+
+      const resolved = resolveCostProfile({
+        config: (app as any).config ?? {},
+        overrides: undefined,
+      });
+
+      return reply.send({
+        ok: true,
+        shop: ctx.shop,
+        persistedOverrides: null,
+        persistedUpdatedAt: null,
+        resolvedProfile: sanitizeResolvedProfile(resolved),
+      });
+    } catch (err: any) {
+      return reply.status(500).send({ error: "Unexpected error", details: String(err?.message ?? err) });
+    }
+  });
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\routes\shopify\ctx.ts =====
+
+// src/routes/shopify/ctx.ts
+import { FastifyInstance } from "fastify";
+import { createShopifyClient } from "../../integrations/shopify/client";
+import { CogsService } from "../../domain/cogs";
+import { CogsOverridesStore } from "../../storage/cogsOverridesStore";
+
+// ✅ Cost model
+import type { CostProfile } from "../../domain/costModel/types";
+import { resolveCostProfileFromConfig } from "../../domain/costModel/resolve";
+
+// ✅ persistence stores
+import { CostModelOverridesStore } from "../../storage/costModelOverridesStore";
+import { ActionPlanStateStore } from "../../storage/actionPlanStateStore";
+
+export type ShopifyCtx = {
+  shop: string;
+  shopify: ReturnType<typeof createShopifyClient>;
+  cogsOverridesStore: CogsOverridesStore;
+  cogsService: CogsService;
+  fetchOrders: (days: number) => Promise<any[]>;
+
+  // base-from-config (deterministic)
+  costProfile: CostProfile;
+
+  // persisted overrides (used by routes)
+  costModelOverridesStore: CostModelOverridesStore;
+
+  // ✅ NEW: Action plan state persistence (status/notes/due dates)
+  actionPlanStateStore: ActionPlanStateStore;
+
+  // audit/debug
+  fetchOrderById: (orderId: string) => Promise<any>;
+};
+
+export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx> {
+  const shop = app.config.SHOPIFY_STORE_DOMAIN;
+  const token = app.config.SHOPIFY_ADMIN_TOKEN;
+
+  const shopify = createShopifyClient({ shopDomain: shop, adminToken: token });
+
+  // MVP persistence for manual COGS overrides + ignore flag
+  const cogsOverridesStore = new CogsOverridesStore();
+  await cogsOverridesStore.ensureLoaded();
+
+  const cogsService = new CogsService(cogsOverridesStore);
+
+  // base profile from config (no meta)
+  const costProfile = resolveCostProfileFromConfig(app.config);
+
+  // persisted cost model overrides (fee/shipping/flags/ads mode + fixed costs)
+  const costModelOverridesStore = new CostModelOverridesStore({ shop });
+  await costModelOverridesStore.ensureLoaded();
+
+  // ✅ NEW: persisted action plan state (status/notes)
+  const actionPlanStateStore = new ActionPlanStateStore({ shop });
+  await actionPlanStateStore.ensureLoaded();
+
+  async function fetchOrders(days: number) {
+    const since = new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000).toISOString();
+
+    const ordersPath =
+      `/admin/api/2024-01/orders.json` +
+      `?status=any&limit=250&created_at_min=${encodeURIComponent(since)}`;
+
+    const json = await shopify.get(ordersPath);
+    return (json.orders ?? []) as any[];
+  }
+
+  async function fetchOrderById(orderId: string) {
+    const path = `/admin/api/2024-01/orders/${encodeURIComponent(orderId)}.json?status=any`;
+    const json = await shopify.get(path);
+    if (!json?.order) {
+      const err: any = new Error(`Order not found: ${orderId}`);
+      err.status = 404;
+      throw err;
+    }
+    return json.order as any;
+  }
+
+  return {
+    shop,
+    shopify,
+    cogsOverridesStore,
+    cogsService,
+    fetchOrders,
+    costProfile,
+    costModelOverridesStore,
+    actionPlanStateStore,
+    fetchOrderById,
+  };
+}
+
+
+===== FILE: C:\Users\Erik\OneDrive\Desktop\SaaS\ShopifySaaS\shopify-profit-engine\apps\backend\src\storage\costModelOverridesStore.ts =====
+
+// src/storage/costModelOverridesStore.ts
+import fs from "node:fs/promises";
+import path from "node:path";
+import type { CostProfileOverrides } from "../domain/costModel/types";
+
+type Persisted = {
+  shop: string;
+  updatedAt: string;
+  overrides: CostProfileOverrides;
+};
+
+export class CostModelOverridesStore {
+  private loaded = false;
+  private persisted: Persisted | null = null;
+
+  constructor(private params: { shop: string; dataDir?: string }) {}
+
+  private filePath() {
+    const dir = this.params.dataDir ?? path.join(process.cwd(), "data");
+    return path.join(dir, `costModelOverrides.${this.params.shop}.json`);
+  }
+
+  async ensureLoaded() {
+    if (this.loaded) return;
+    this.loaded = true;
+
+    try {
+      const raw = await fs.readFile(this.filePath(), "utf-8");
+      const parsed = JSON.parse(raw);
+
+      if (!parsed || typeof parsed !== "object" || !parsed.overrides) {
+        this.persisted = null;
+        return;
+      }
+
+      this.persisted = {
+        shop: String(parsed.shop ?? this.params.shop),
+        updatedAt: String(parsed.updatedAt ?? new Date().toISOString()),
+        overrides: parsed.overrides as CostProfileOverrides,
+      };
+    } catch {
+      this.persisted = null;
+    }
+  }
+
+  getOverridesSync(): CostProfileOverrides | undefined {
+    return this.persisted?.overrides;
+  }
+
+  getUpdatedAtSync(): string | undefined {
+    return this.persisted?.updatedAt;
+  }
+
+  async setOverrides(overrides: CostProfileOverrides) {
+    await this.ensureLoaded();
+
+    const payload: Persisted = {
+      shop: this.params.shop,
+      updatedAt: new Date().toISOString(),
+      overrides,
+    };
+
+    this.persisted = payload;
+
+    const fp = this.filePath();
+    await fs.mkdir(path.dirname(fp), { recursive: true });
+    await fs.writeFile(fp, JSON.stringify(payload, null, 2), "utf-8");
+  }
+
+  async clear() {
+    await this.ensureLoaded();
+    this.persisted = null;
+
+    try {
+      await fs.unlink(this.filePath());
+    } catch {
+      // ignore
+    }
+  }
+}

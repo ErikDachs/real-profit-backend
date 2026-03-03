@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "updatedAt": "2026-03-03T09:12:33.116Z",
+  "shops": {
+    "test-shop.myshopify.com": {
+      "accessToken": null,
+      "scope": null,
+      "installedAt": null,
+      "updatedAt": "2026-03-03T09:00:25.103Z",
+      "uninstalledAt": null,
+      "pendingOAuth": {
+        "state": "ee0dfea066d7faf3192101943dde7cb3addae1c1b584acea",
+        "expiresAt": "2026-03-03T09:10:25.101Z"
+      }
+    },
+    "deinshop.myshopify.com": {
+      "accessToken": null,
+      "scope": null,
+      "installedAt": null,
+      "updatedAt": "2026-03-03T09:09:34.198Z",
+      "uninstalledAt": null,
+      "pendingOAuth": {
+        "state": "113c9904d1fe6fed00c0327bb390479560507425e356048a",
+        "expiresAt": "2026-03-03T09:19:34.196Z"
+      }
+    },
+    "profit-engine-test.myshopify.com": {
+      "accessToken": null,
+      "scope": null,
+      "installedAt": null,
+      "updatedAt": "2026-03-03T09:12:33.115Z",
+      "uninstalledAt": null,
+      "pendingOAuth": {
+        "state": "2e52a081ef640e3d4b29690e013a526b03d9ad4d04c46d35",
+        "expiresAt": "2026-03-03T09:22:33.115Z"
+      }
+    }
+  }
+}

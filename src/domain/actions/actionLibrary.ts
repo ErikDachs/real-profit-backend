@@ -1,0 +1,176 @@
+// src/domain/actions/actionLibrary.ts
+import type { OpportunityType, UnifiedOpportunity } from "../opportunities/types";
+import type { ActionEffort, ActionConfidence } from "./types";
+
+export type ActionTemplate = {
+  code: string;
+  label: string;
+
+  effort: ActionEffort;
+  confidence: ActionConfidence;
+
+  checklist: Array<{ code: string; label: string }>;
+
+  buildWhy: (params: { opp: UnifiedOpportunity }) => string;
+};
+
+function baseChecklist(type: OpportunityType): Array<{ code: string; label: string }> {
+  switch (type) {
+    case "HIGH_REFUNDS":
+      return [
+        { code: "collect_refund_reasons", label: "Collect refund reasons for top SKUs (support tags, return notes)." },
+        { code: "audit_product_pages", label: "Audit product pages: claims, photos, sizing, shipping expectations." },
+        { code: "fix_quality_and_fulfillment", label: "Fix quality / packaging / fulfillment issues causing returns." },
+        { code: "tighten_policy_where_needed", label: "Review return policy and exceptions (without harming conversion)." },
+      ];
+
+    case "HIGH_FEES":
+      return [
+        { code: "check_fee_breakdown", label: "Check fee breakdown by payment method/provider/plan." },
+        { code: "optimize_payment_mix", label: "Shift customers to cheaper payment methods (where possible)." },
+        { code: "negotiate_or_switch", label: "Negotiate rates or switch provider if fee share stays high." },
+      ];
+
+    case "SHIPPING_SUBSIDY":
+      return [
+        { code: "measure_shipping_loss_by_zone", label: "Identify loss zones: country/zone, weight tiers, carriers." },
+        { code: "adjust_thresholds", label: "Adjust free shipping thresholds / shipping prices." },
+        { code: "reduce_costs", label: "Negotiate carrier rates or reduce packaging/weights." },
+      ];
+
+    case "MISSING_COGS":
+      return [
+        { code: "fill_missing_unit_costs", label: "Add unit cost (COGS) for missing variants (overrides/import)." },
+        { code: "setup_process", label: "Set a process so new SKUs always get costs." },
+        { code: "rerun_insights", label: "Re-run insights after adding costs to confirm true profit." },
+      ];
+
+    case "LOW_MARGIN":
+      return [
+        { code: "audit_discounting", label: "Audit discounting and compare margin by discount codes." },
+        { code: "review_pricing", label: "Review pricing on top-selling SKUs and bundles." },
+        { code: "reduce_variable_costs", label: "Reduce variable costs: COGS, fulfillment, packaging, shipping." },
+        { code: "focus_ads_on_margin", label: "Shift spend to higher-margin offers." },
+      ];
+
+    case "NEGATIVE_CM":
+      return [
+        { code: "stop_unprofitable_ads", label: "Pause ads for products/orders with negative profit after ads." },
+        { code: "fix_unit_economics", label: "Fix unit economics: pricing, COGS, shipping, refunds, fees." },
+        { code: "relaunch_with_guardrails", label: "Re-launch campaigns with ROAS guardrails above break-even." },
+      ];
+
+    case "MARGIN_DRIFT":
+      return [
+        { code: "identify_drift_period", label: "Identify the timeframe where the margin started dropping." },
+        { code: "compare_top_drivers", label: "Compare top drivers: refunds, discounts, COGS, fees, shipping." },
+        { code: "pinpoint_products", label: "Pinpoint products/SKUs causing the drop and take corrective action." },
+      ];
+
+    case "BREAK_EVEN_RISK":
+      return [
+        { code: "reduce_spend_now", label: "Reduce spend until ROAS is above break-even." },
+        { code: "move_budget_to_margin", label: "Shift budget to higher-margin products / exclude high-refund SKUs." },
+        { code: "monitor_be_roas", label: "Monitor break-even ROAS daily while scaling." },
+      ];
+
+    // ✅ NEW
+    case "HIGH_FIXED_COST_LOAD":
+      return [
+        { code: "verify_fixed_costs", label: "Verify fixed costs inputs (rent, payroll, apps, agencies, tools)." },
+        { code: "reduce_overhead", label: "Reduce overhead where possible or renegotiate recurring contracts." },
+        { code: "increase_aov_or_margin", label: "Increase AOV and/or margin to cover fixed load." },
+        { code: "monitor_fixed_ratio", label: "Track fixed cost ratio (% of net sales) weekly." },
+      ];
+
+    case "OPERATING_LEVERAGE_RISK":
+      return [
+        { code: "stabilize_profit_floor", label: "Set a profit floor: minimum net sales required per month." },
+        { code: "improve_margin_mix", label: "Shift sales mix toward higher-margin SKUs and bundles." },
+        { code: "scale_only_with_buffer", label: "Scale ads only with buffer above true break-even (incl fixed costs)." },
+      ];
+
+    default:
+      return [{ code: "review", label: "Review this issue and take corrective action." }];
+  }
+}
+
+function defaultEffort(type: OpportunityType): ActionEffort {
+  switch (type) {
+    case "MISSING_COGS":
+    case "HIGH_FEES":
+      return "LOW";
+    case "SHIPPING_SUBSIDY":
+    case "HIGH_REFUNDS":
+    case "MARGIN_DRIFT":
+    case "HIGH_FIXED_COST_LOAD":
+      return "MEDIUM";
+    case "LOW_MARGIN":
+    case "NEGATIVE_CM":
+    case "BREAK_EVEN_RISK":
+    case "OPERATING_LEVERAGE_RISK":
+      return "HIGH";
+    default:
+      return "MEDIUM";
+  }
+}
+
+function defaultConfidence(type: OpportunityType): ActionConfidence {
+  switch (type) {
+    case "MISSING_COGS":
+    case "HIGH_FEES":
+    case "SHIPPING_SUBSIDY":
+      return "HIGH";
+    case "HIGH_REFUNDS":
+    case "LOW_MARGIN":
+    case "HIGH_FIXED_COST_LOAD":
+      return "MEDIUM";
+    case "NEGATIVE_CM":
+    case "MARGIN_DRIFT":
+    case "BREAK_EVEN_RISK":
+    case "OPERATING_LEVERAGE_RISK":
+      return "MEDIUM";
+    default:
+      return "MEDIUM";
+  }
+}
+
+function mkTemplate(type: OpportunityType): ActionTemplate {
+  return {
+code: `FIX_${type}`,
+label: `Fix: ${type}`,
+    effort: defaultEffort(type),
+    confidence: defaultConfidence(type),
+    checklist: baseChecklist(type),
+    buildWhy: ({ opp }) => {
+      const loss = Number(opp.estimatedMonthlyLoss || 0);
+      return `This issue is estimated to cost about ${loss}/month (normalized).`;
+    },
+  };
+}
+
+export function buildTemplatesForOpportunity(opp: UnifiedOpportunity): ActionTemplate[] {
+  const templates: ActionTemplate[] = [mkTemplate(opp.type)];
+
+  for (const a of opp.actions ?? []) {
+    templates.push({
+      code: String(a.code),
+      label: String(a.label),
+      effort: defaultEffort(opp.type),
+      confidence: defaultConfidence(opp.type),
+      checklist: baseChecklist(opp.type),
+      buildWhy: ({ opp }) => `Recommended action for ${opp.type} based on current profit signals.`,
+    });
+  }
+
+  const seen = new Set<string>();
+  const out: ActionTemplate[] = [];
+  for (const t of templates) {
+    const c = String(t.code);
+    if (seen.has(c)) continue;
+    seen.add(c);
+    out.push(t);
+  }
+
+  return out;
+}

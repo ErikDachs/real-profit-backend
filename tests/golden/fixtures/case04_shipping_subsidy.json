@@ -1,0 +1,40 @@
+{
+  "name": "case04_shipping_subsidy",
+  "costConfig": {
+    "feePercent": 0.02,
+    "feeFixed": 0.3,
+    "shipping": { "costPerOrder": 6.0 },
+    "flags": { "includeShippingCost": true },
+    "ads": { "periodTotal": 0.0 }
+  },
+  "orders": [
+    {
+      "id": "4001",
+      "name": "#4001",
+      "createdAt": "2026-02-23T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 333, "qty": 1, "unitPrice": 80.0 }],
+      "shippingRevenue": 0.0,
+      "refunds": 0.0
+    }
+  ],
+  "cogs": {
+    "333": 40.0
+  },
+  "expected": {
+    "ordersSummary": {
+      "orders": 1,
+      "grossSales": 80.0,
+      "refunds": 0.0,
+      "netAfterRefunds": 80.0,
+      "shippingRevenue": 0.0,
+      "shippingCost": 6.0,
+      "cogs": 40.0,
+      "paymentFees": 1.9,
+      "contributionMargin": 38.1,
+      "profitAfterShipping": 32.1,
+      "profitAfterAds": 38.1,
+      "profitAfterAdsAndShipping": 32.1
+    }
+  }
+}

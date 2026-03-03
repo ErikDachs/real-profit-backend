@@ -1,0 +1,51 @@
+{
+  "name": "case06_multi_order",
+  "costConfig": {
+    "feePercent": 0.02,
+    "feeFixed": 0.3,
+    "shipping": { "costPerOrder": 5.0 },
+    "flags": { "includeShippingCost": true },
+    "ads": { "periodTotal": 0.0 }
+  },
+  "orders": [
+    {
+      "id": "6001",
+      "name": "#6001",
+      "createdAt": "2026-02-25T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 601, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 0.0,
+      "refunds": 0.0
+    },
+    {
+      "id": "6002",
+      "name": "#6002",
+      "createdAt": "2026-02-25T11:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 602, "qty": 2, "unitPrice": 50.0 }],
+      "shippingRevenue": 0.0,
+      "refunds": 0.0
+    }
+  ],
+  "cogs": {
+    "601": 30.0,
+    "602": 20.0
+  },
+  "expected": {
+    "ordersSummary": {
+      "orders": 2,
+      "grossSales": 200.0,
+      "refunds": 0.0,
+      "netAfterRefunds": 200.0,
+      "shippingRevenue": 0.0,
+      "shippingCost": 10.0,
+      "cogs": 70.0,
+      "paymentFees": 4.6,
+      "contributionMargin": 125.4,
+      "profitAfterShipping": 115.4,
+      "profitAfterAds": 125.4,
+      "profitAfterAdsAndShipping": 115.4,
+      "missingCogsCount": 0
+    }
+  }
+}

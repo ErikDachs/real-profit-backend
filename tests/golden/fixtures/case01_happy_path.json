@@ -1,0 +1,32 @@
+{
+  "name": "case01_happy_path",
+  "costConfig": {
+    "feePercent": 0.02,
+    "feeFixed": 0.3,
+    "shipping": { "costPerOrder": 4.0 },
+    "flags": { "includeShippingCost": true },
+    "ads": { "periodTotal": 100.0 }
+  },
+  "orders": [
+    {
+      "id": "1001",
+      "name": "#1001",
+      "createdAt": "2026-02-20T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 111, "qty": 1, "unitPrice": 50.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    }
+  ],
+  "cogs": {
+    "111": 18.0
+  },
+  "expected": {
+    "ordersSummary": {
+      "orders": 1,
+      "grossSales": 50.0,
+      "refunds": 0.0,
+      "netAfterRefunds": 50.0
+    }
+  }
+}

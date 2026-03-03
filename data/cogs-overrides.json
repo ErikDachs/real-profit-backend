@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "updatedAt": "2026-02-25T09:49:34.782Z",
+  "overrides": {
+    "44862408491062": {
+      "unitCost": 10,
+      "ignoreCogs": false,
+      "updatedAt": "2026-02-25T09:37:41.916Z"
+    },
+    "44862408359990": {
+      "ignoreCogs": true,
+      "updatedAt": "2026-02-25T09:49:34.782Z"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "shop": "profit-engine-test.myshopify.com",
+  "updatedAt": "2026-03-02T07:51:28.750Z",
+  "overrides": {
+    "payment": {
+      "feePercent": 0.06,
+      "feeFixed": 0.5
+    },
+    "shipping": {
+      "costPerOrder": 7.5
+    },
+    "ads": {
+      "allocationMode": "BY_NET_SALES"
+    },
+    "flags": {
+      "includeShippingCost": true
+    },
+    "fixedCosts": {
+      "allocationMode": "BY_NET_SALES",
+      "daysInMonth": 30,
+      "monthlyItems": [
+        {
+          "category": "OPS",
+          "name": "Rent",
+          "id": "rent",
+          "enabled": true,
+          "amountMonthly": 3000
+        }
+      ]
+    }
+  }
+}

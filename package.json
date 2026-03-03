@@ -1,0 +1,32 @@
+{
+  "name": "@apps/backend",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest run --coverage",
+    "test:golden": "tsx --test tests/golden/**/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/env": "^5.0.3",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^10.3.0",
+    "fastify": "^5.7.4",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.35",
+    "esbuild": "^0.27.3",
+    "eslint": "^9",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
