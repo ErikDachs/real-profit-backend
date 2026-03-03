@@ -45,8 +45,8 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
   const legacyShop = String(app.config.SHOPIFY_STORE_DOMAIN || "").trim().toLowerCase();
   const legacyToken = String(app.config.SHOPIFY_ADMIN_TOKEN || "").trim();
 
-  // ✅ New store for OAuth tokens
-  const shopsStore = new ShopsStore();
+  // ✅ New store for OAuth tokens (MUST match oauth.route.ts DATA_DIR)
+  const shopsStore = new ShopsStore({ dataDir: app.config.DATA_DIR });
   await shopsStore.ensureLoaded();
 
   async function createShopifyForShop(shop: string) {
@@ -83,8 +83,7 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
   const shopify =
     legacyShop && legacyToken
       ? createShopifyClient({ shopDomain: legacyShop, accessToken: legacyToken })
-      : // fallback: if you set legacyShop but token is now in shopsStore
-        legacyShop
+      : legacyShop
         ? createShopifyClient({
             shopDomain: legacyShop,
             accessToken: await shopsStore.getAccessTokenOrThrow(legacyShop),
@@ -114,7 +113,9 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
   // legacy methods used by your existing routes
   async function fetchOrders(days: number) {
     if (!legacyShop) {
-      const err: any = new Error("SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store.");
+      const err: any = new Error(
+        "SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store."
+      );
       err.status = 400;
       throw err;
     }
@@ -123,7 +124,9 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
 
   async function fetchOrderById(orderId: string) {
     if (!legacyShop) {
-      const err: any = new Error("SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store.");
+      const err: any = new Error(
+        "SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store."
+      );
       err.status = 400;
       throw err;
     }

@@ -10,8 +10,8 @@ export async function createShopifyCtx(app) {
     // Legacy envs (keep tests green)
     const legacyShop = String(app.config.SHOPIFY_STORE_DOMAIN || "").trim().toLowerCase();
     const legacyToken = String(app.config.SHOPIFY_ADMIN_TOKEN || "").trim();
-    // ✅ New store for OAuth tokens
-    const shopsStore = new ShopsStore();
+    // ✅ New store for OAuth tokens (MUST match oauth.route.ts DATA_DIR)
+    const shopsStore = new ShopsStore({ dataDir: app.config.DATA_DIR });
     await shopsStore.ensureLoaded();
     async function createShopifyForShop(shop) {
         const token = await shopsStore.getAccessTokenOrThrow(shop);
@@ -39,17 +39,16 @@ export async function createShopifyCtx(app) {
     // Legacy single-shop client (existing routes)
     const shopify = legacyShop && legacyToken
         ? createShopifyClient({ shopDomain: legacyShop, accessToken: legacyToken })
-        : // fallback: if you set legacyShop but token is now in shopsStore
-            legacyShop
-                ? createShopifyClient({
-                    shopDomain: legacyShop,
-                    accessToken: await shopsStore.getAccessTokenOrThrow(legacyShop),
-                })
-                : // dummy placeholder to avoid crash on boot; routes will error if used
-                    createShopifyClient({
-                        shopDomain: "example.myshopify.com",
-                        accessToken: "missing_token",
-                    });
+        : legacyShop
+            ? createShopifyClient({
+                shopDomain: legacyShop,
+                accessToken: await shopsStore.getAccessTokenOrThrow(legacyShop),
+            })
+            : // dummy placeholder to avoid crash on boot; routes will error if used
+                createShopifyClient({
+                    shopDomain: "example.myshopify.com",
+                    accessToken: "missing_token",
+                });
     // MVP persistence for manual COGS overrides + ignore flag
     const cogsOverridesStore = new CogsOverridesStore();
     await cogsOverridesStore.ensureLoaded();

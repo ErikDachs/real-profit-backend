@@ -61,8 +61,18 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
   app.get("/api/orders/profit", async (req, reply) => {
     try {
       const q = req.query as any;
+
       const daysNum = parseDays(q, 30);
       const adSpendNum = round2(Number(q?.adSpend ?? 0) || 0);
+
+      // ✅ Determine shop context
+      const shopFromQuery = String(q?.shop ?? "").trim().toLowerCase();
+      const shop = shopFromQuery || ctx.shop; // legacy fallback if configured
+
+      // ✅ Select the correct Shopify client + order fetcher
+      const shopifyClient = shopFromQuery ? await ctx.createShopifyForShop(shopFromQuery) : ctx.shopify;
+
+      const orders = shopFromQuery ? await ctx.fetchOrdersForShop(shopFromQuery, daysNum) : await ctx.fetchOrders(daysNum);
 
       // ✅ persisted overrides + request overrides (request wins) — SSOT helper
       await ctx.costModelOverridesStore.ensureLoaded();
@@ -75,12 +85,10 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
         overrides: mergedOverrides,
       });
 
-      const orders = await ctx.fetchOrders(daysNum);
-
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders,
         cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        shopifyGET: shopifyClient.get,
       });
 
       const orderProfits: OrderProfitRow[] = [];
@@ -89,7 +97,7 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
           order: o,
           costProfile,
           cogsService: ctx.cogsService,
-          shopifyGET: ctx.shopify.get,
+          shopifyGET: shopifyClient.get,
           unitCostByVariant,
           isIgnoredVariant: (variantId: number) => ctx.cogsOverridesStore.isIgnoredSync(variantId),
         });
@@ -179,8 +187,6 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
       const monthlyTotal = round2(Number(costProfile.derived?.fixedCostsMonthlyTotal ?? 0));
       const fixedCostsAllocatedInPeriod = round2(monthlyTotal * (Math.max(1, Number(daysNum || 0)) / daysInMonth));
 
-      // NOTE: cost model types currently only include PER_ORDER | BY_NET_SALES.
-      // We keep BY_DAYS support here as a route-level mode (deterministic, no per-order split).
       const fixedAllocMode =
         (costProfile.fixedCosts?.allocationMode ?? "PER_ORDER") as "PER_ORDER" | "BY_NET_SALES" | "BY_DAYS";
 
@@ -220,12 +226,10 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
           profitAfterFixedCosts: round2(Number(o.profitAfterAdsAndShipping ?? 0)),
         }));
 
-        // merge back in original order
         const byId = new Map<any, OrderProfitRow>([...allocatedOperational, ...giftOnlyPatched].map((x) => [x.id, x]));
         enriched = enriched.map((o) => byId.get(o.id) ?? o);
       }
 
-      // sort by most negative first (operational view)
       enriched.sort((a, b) => {
         const av = Number(a.profitAfterFixedCosts ?? a.profitAfterAds ?? a.profitAfterFees ?? 0);
         const bv = Number(b.profitAfterFixedCosts ?? b.profitAfterAds ?? b.profitAfterFees ?? 0);
@@ -233,7 +237,7 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
       });
 
       return reply.send({
-        shop: ctx.shop,
+        shop, // ✅ now returns actual shop context
         days: daysNum,
         count: enriched.length,
         adSpend: adSpendNum > 0 ? adSpendNum : 0,
