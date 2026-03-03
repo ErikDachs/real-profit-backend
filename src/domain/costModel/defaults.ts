@@ -1,5 +1,5 @@
 // src/domain/costModel/defaults.ts
-import type { CostProfile } from "./types";
+import type { CostProfile } from "./types.js";
 
 export const DEFAULT_COST_PROFILE: CostProfile = {
   payment: {

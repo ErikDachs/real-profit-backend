@@ -1,17 +1,17 @@
 // src/routes/shopify/profitKillers.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
-import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit";
-import { buildDailyProfit } from "../../domain/profitDaily";
-import { buildProfitKillersInsights } from "../../domain/insights";
-import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers";
-import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation";
+import type { ShopifyCtx } from "./ctx.js";
+import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit.js";
+import { buildDailyProfit } from "../../domain/profitDaily.js";
+import { buildProfitKillersInsights } from "../../domain/insights.js";
+import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
+import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation.js";
 
 // ✅ SSOT Cost Model Engine
-import { resolveCostProfile } from "../../domain/costModel/resolve";
+import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
 // ✅ NEW: Opportunity -> Scenario simulations (true re-run via SSOT engine)
-import { runOpportunityScenarioSimulations } from "../../domain/simulations/runScenarioPresets";
+import { runOpportunityScenarioSimulations } from "../../domain/simulations/runScenarioPresets.js";
 
 export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/insights/profit-killers", async (req, reply) => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildDailyProfit } from "./profitDaily";
-import { calcBreakEvenRoas, calcContributionMarginPct } from "./metrics";
+import { buildDailyProfit } from "./profitDaily.js";
+import { calcBreakEvenRoas, calcContributionMarginPct } from "./metrics.js";
 
 describe("buildDailyProfit", () => {
   it("aggregiert pro Tag korrekt (inkl. shipping + ads) und berechnet Pct/ROAS über die Metrics-Funktionen", () => {

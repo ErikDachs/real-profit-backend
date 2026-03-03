@@ -1,6 +1,6 @@
 // src/domain/simulations/types.ts
 
-import type { OpportunityType } from "../opportunities/types";
+import type { OpportunityType } from "../opportunities/types.js";
 
 export type SimulationScenario = {
   key: string; // stable id

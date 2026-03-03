@@ -1,7 +1,7 @@
 // src/domain/actions/priority.ts
-import type { ActionConfidence, ActionEffort } from "./types";
-import type { OpportunityDeepDive } from "../opportunities/deepDive/types";
-import type { OpportunityType } from "../opportunities/types";
+import type { ActionConfidence, ActionEffort } from "./types.js";
+import type { OpportunityDeepDive } from "../opportunities/deepDive/types.js";
+import type { OpportunityType } from "../opportunities/types.js";
 
 // Deterministic mapping
 export function effortWeight(e: ActionEffort): number {

@@ -1,7 +1,7 @@
 // src/storage/costModelOverridesStore.ts
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { CostProfileOverrides } from "../domain/costModel/types";
+import type { CostProfileOverrides } from "../domain/costModel/types.js";
 
 type Persisted = {
   shop: string;

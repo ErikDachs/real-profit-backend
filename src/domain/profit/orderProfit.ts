@@ -1,15 +1,15 @@
 // src/domain/profit/orderProfit.ts
-import { round2 } from "../../utils/money";
-import type { CogsService } from "../cogs";
-import { calcContributionMargin, calcContributionMarginPct, calcBreakEvenRoas } from "../metrics";
-import { extractRefundsFromOrder } from "./refunds";
-import { extractShippingRevenueFromOrder } from "./shipping";
-import { getOrderLineItemFacts, orderIsGiftCardOnly } from "./variants";
-import { isMissingUnitCost } from "./cogsGovernance";
-import { calcPaymentFees } from "./fees";
+import { round2 } from "../../utils/money.js";
+import type { CogsService } from "../cogs.js";
+import { calcContributionMargin, calcContributionMarginPct, calcBreakEvenRoas } from "../metrics.js";
+import { extractRefundsFromOrder } from "./refunds.js";
+import { extractShippingRevenueFromOrder } from "./shipping.js";
+import { getOrderLineItemFacts, orderIsGiftCardOnly } from "./variants.js";
+import { isMissingUnitCost } from "./cogsGovernance.js";
+import { calcPaymentFees } from "./fees.js";
 
 // ✅ Cost Model
-import type { CostProfile } from "../costModel/types";
+import type { CostProfile } from "../costModel/types.js";
 
 export async function calculateOrderProfit(params: {
   order: any;

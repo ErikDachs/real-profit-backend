@@ -1,10 +1,10 @@
 // src/domain/actions/buildActionPlan.ts
-import type { OpportunityType } from "../opportunities/types";
-import type { OpportunityDeepDive } from "../opportunities/deepDive/types";
+import type { OpportunityType } from "../opportunities/types.js";
+import type { OpportunityDeepDive } from "../opportunities/deepDive/types.js";
 
-import type { ActionPlan, ActionItem, BuildActionPlanParams, ActionEffort } from "./types";
-import { buildTemplatesForOpportunity } from "./actionLibrary";
-import { computePriorityScore } from "./priority";
+import type { ActionPlan, ActionItem, BuildActionPlanParams, ActionEffort } from "./types.js";
+import { buildTemplatesForOpportunity } from "./actionLibrary.js";
+import { computePriorityScore } from "./priority.js";
 
 function pickDeepDiveByType(deepDives: OpportunityDeepDive[] | undefined, type: OpportunityType) {
   return (deepDives ?? []).find((d) => d.type === type) ?? null;

@@ -1,5 +1,5 @@
 // src/domain/insights/cmDecomposition.ts
-import { decomposeMarginDriftCore } from "./cmDecomposition.core";
+import { decomposeMarginDriftCore } from "./cmDecomposition.core.js";
 
 export type CmAgg = {
   orders?: number;

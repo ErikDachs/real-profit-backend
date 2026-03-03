@@ -1,6 +1,6 @@
 // src/domain/actions/actionLibrary.ts
-import type { OpportunityType, UnifiedOpportunity } from "../opportunities/types";
-import type { ActionEffort, ActionConfidence } from "./types";
+import type { OpportunityType, UnifiedOpportunity } from "../opportunities/types.js";
+import type { ActionEffort, ActionConfidence } from "./types.js";
 
 export type ActionTemplate = {
   code: string;

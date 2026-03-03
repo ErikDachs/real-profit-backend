@@ -48,7 +48,7 @@ vi.mock("./breakEvenRisk", () => {
   };
 });
 
-import { buildProfitKillersInsights } from "./profitKillers";
+import { buildProfitKillersInsights } from "./profitKillers.js";
 
 type OrderRow = any;
 type ProductRow = any;

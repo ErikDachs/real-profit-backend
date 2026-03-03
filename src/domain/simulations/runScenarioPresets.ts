@@ -1,12 +1,12 @@
 // src/domain/simulations/runScenarioPresets.ts
-import type { UnifiedOpportunity } from "../opportunities/types";
-import type { ResolvedCostProfile } from "../costModel/types";
-import type { CogsService } from "../cogs";
+import type { UnifiedOpportunity } from "../opportunities/types.js";
+import type { ResolvedCostProfile } from "../costModel/types.js";
+import type { CogsService } from "../cogs.js";
 
-import { buildOrdersSummary } from "../profit";
-import { resolveCostProfile } from "../costModel/resolve";
-import { buildProfitScenarioResult } from "./profitScenarioSimulation";
-import { getScenarioPresetsForOpportunity, mergeDeepShallow, scenarioToCostOverrides } from "./scenarioPresets";
+import { buildOrdersSummary } from "../profit.js";
+import { resolveCostProfile } from "../costModel/resolve.js";
+import { buildProfitScenarioResult } from "./profitScenarioSimulation.js";
+import { getScenarioPresetsForOpportunity, mergeDeepShallow, scenarioToCostOverrides } from "./scenarioPresets.js";
 
 export type OpportunityScenarioSimulation = {
   type: string;

@@ -1,6 +1,6 @@
 // src/domain/actions/types.ts
-import type { OpportunityType, UnifiedOpportunity } from "../opportunities/types";
-import type { OpportunityDeepDive } from "../opportunities/deepDive/types";
+import type { OpportunityType, UnifiedOpportunity } from "../opportunities/types.js";
+import type { OpportunityDeepDive } from "../opportunities/deepDive/types.js";
 
 export type ActionEffort = "LOW" | "MEDIUM" | "HIGH";
 export type ActionConfidence = "LOW" | "MEDIUM" | "HIGH";

@@ -1,23 +1,23 @@
 // src/routes/shopify/opportunityDeepDive.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
+import type { ShopifyCtx } from "./ctx.js";
 
-import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit";
-import { buildDailyProfit } from "../../domain/profitDaily";
+import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit.js";
+import { buildDailyProfit } from "../../domain/profitDaily.js";
 
-import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers";
+import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
 
-import { buildShippingSubsidyInsight } from "../../domain/insights/shippingSubsidy";
-import { buildUnifiedOpportunityRanking } from "../../domain/opportunities/unifiedOpportunityRanking";
-import { buildImpactSimulation } from "../../domain/simulations/impactSimulation";
+import { buildShippingSubsidyInsight } from "../../domain/insights/shippingSubsidy.js";
+import { buildUnifiedOpportunityRanking } from "../../domain/opportunities/unifiedOpportunityRanking.js";
+import { buildImpactSimulation } from "../../domain/simulations/impactSimulation.js";
 
-import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation";
+import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation.js";
 
-import { buildOpportunityDeepDive } from "../../domain/opportunities/deepDive";
-import type { OpportunityType } from "../../domain/opportunities/types";
+import { buildOpportunityDeepDive } from "../../domain/opportunities/deepDive.js";
+import type { OpportunityType } from "../../domain/opportunities/types.js";
 
 // ✅ SSOT Cost Model Engine
-import { resolveCostProfile } from "../../domain/costModel/resolve";
+import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
 export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/opportunities/deep-dive", async (req, reply) => {

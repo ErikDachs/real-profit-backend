@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import type { ShopifyCtx } from "../shopify/ctx";
+import type { ShopifyCtx } from "../shopify/ctx.js";
 
 // ---------- Mock: createShopifyCtx (keine echten Shopify Calls, kein File IO)
 const fakeOrders = [
@@ -320,7 +320,7 @@ vi.mock("../../domain/health/profitHealth", () => {
 });
 
 // ---------- IMPORTANT: buildApp import AFTER mocks
-import { buildApp } from "../../app";
+import { buildApp } from "../../app.js";
 
 describe("Route contracts (shopify routes)", () => {
   let app: any;

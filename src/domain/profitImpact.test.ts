@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildProfitImpact } from "./profitImpact";
+import { buildProfitImpact } from "./profitImpact.js";
 
 describe("buildProfitImpact", () => {
   it("HIGH_REFUNDS: triggert nur wenn refundRatePct > threshold und skaliert Monthly korrekt", () => {

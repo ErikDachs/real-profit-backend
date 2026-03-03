@@ -1,5 +1,5 @@
 // src/domain/insights/profitKillers.daily.ts
-import { round2 } from "../../utils/money";
+import { round2 } from "../../utils/money.js";
 
 export function buildDailyFromOrders(ordersWithReasons: Array<any>) {
   const dailyLike = ordersWithReasons

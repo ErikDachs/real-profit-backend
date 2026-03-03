@@ -1,8 +1,8 @@
 // src/domain/opportunities/deepDive/drivers/shipping.ts
-import { round2 } from "../../../../utils/money";
-import type { OrderProfitRow, ProductProfitRow } from "../../../insights/types";
-import type { DeepDiveDriver } from "../types";
-import { finalizeShares } from "../deepDive.utils";
+import { round2 } from "../../../../utils/money.js";
+import type { OrderProfitRow, ProductProfitRow } from "../../../insights/types.js";
+import type { DeepDiveDriver } from "../types.js";
+import { finalizeShares } from "../deepDive.utils.js";
 
 export function buildShippingDrivers(params: {
   type: any;

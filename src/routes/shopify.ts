@@ -1,27 +1,27 @@
 // src/routes/shopify.ts
 import { FastifyInstance } from "fastify";
-import { createShopifyCtx } from "./shopify/ctx";
+import { createShopifyCtx } from "./shopify/ctx.js";
 
-import { registerOrdersSummaryRoute } from "./shopify/ordersSummary.route";
-import { registerOrdersProfitRoute } from "./shopify/ordersProfit.route";
-import { registerDailyProfitRoute } from "./shopify/dailyProfit.route";
-import { registerProductsProfitRoute } from "./shopify/productsProfit.route";
-import { registerProfitKillersRoute } from "./shopify/profitKillers.route";
-import { registerCogsOverridesRoutes } from "./shopify/cogsOverrides.route";
-import { registerProfitScenariosRoute } from "./shopify/profitScenarios.route";
+import { registerOrdersSummaryRoute } from "./shopify/ordersSummary.route.js";
+import { registerOrdersProfitRoute } from "./shopify/ordersProfit.route.js";
+import { registerDailyProfitRoute } from "./shopify/dailyProfit.route.js";
+import { registerProductsProfitRoute } from "./shopify/productsProfit.route.js";
+import { registerProfitKillersRoute } from "./shopify/profitKillers.route.js";
+import { registerCogsOverridesRoutes } from "./shopify/cogsOverrides.route.js";
+import { registerProfitScenariosRoute } from "./shopify/profitScenarios.route.js";
 
-import { registerOpportunityDeepDiveRoute } from "./shopify/opportunityDeepDive.route";
-import { registerOrderAuditRoute } from "./shopify/orderAudit.route";
+import { registerOpportunityDeepDiveRoute } from "./shopify/opportunityDeepDive.route.js";
+import { registerOrderAuditRoute } from "./shopify/orderAudit.route.js";
 
-import { registerActionsPlanRoute } from "./shopify/actionsPlan.route";
-import { registerActionsStateRoutes } from "./shopify/actionsState.route";
+import { registerActionsPlanRoute } from "./shopify/actionsPlan.route.js";
+import { registerActionsStateRoutes } from "./shopify/actionsState.route.js";
 
-import { registerCostModelRoutes } from "./shopify/costModel.route";
-import { registerDashboardOverviewRoute } from "./shopify/dashboardOverview.route";
+import { registerCostModelRoutes } from "./shopify/costModel.route.js";
+import { registerDashboardOverviewRoute } from "./shopify/dashboardOverview.route.js";
 
 // ✅ NEW
-import { registerShopifyOAuthRoutes } from "./shopify/oauth.route";
-import { registerShopifyWebhooksRoutes } from "./shopify/webhooks.route";
+import { registerShopifyOAuthRoutes } from "./shopify/oauth.route.js";
+import { registerShopifyWebhooksRoutes } from "./shopify/webhooks.route.js";
 
 export async function registerShopifyRoutes(app: FastifyInstance) {
   // ✅ OAuth + Webhooks first (no domain impact)

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import type { ShopifyCtx } from "../shopify/ctx";
+import type { ShopifyCtx } from "../shopify/ctx.js";
 
 function mkErr(status: number, message = "boom") {
   const e: any = new Error(message);
@@ -123,7 +123,7 @@ vi.mock("../../domain/opportunities/deepDive", () => ({
   buildOpportunityDeepDive: () => ({ shop: baseCtx.shop, days: 30, currency: "EUR", type: null, top: [], drivers: [] }),
 }));
 
-import { buildApp } from "../../app";
+import { buildApp } from "../../app.js";
 
 describe("Route error contracts", () => {
   let app: any;

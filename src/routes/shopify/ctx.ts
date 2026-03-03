@@ -1,17 +1,17 @@
 // src/routes/shopify/ctx.ts
 import { FastifyInstance } from "fastify";
-import { createShopifyClient } from "../../integrations/shopify/client";
-import { CogsService } from "../../domain/cogs";
-import { CogsOverridesStore } from "../../storage/cogsOverridesStore";
-import { ShopsStore } from "../../storage/shopsStore";
+import { createShopifyClient } from "../../integrations/shopify/client.js";
+import { CogsService } from "../../domain/cogs.js";
+import { CogsOverridesStore } from "../../storage/cogsOverridesStore.js";
+import { ShopsStore } from "../../storage/shopsStore.js";
 
 // ✅ Cost model
-import type { CostProfile } from "../../domain/costModel/types";
-import { resolveCostProfileFromConfig } from "../../domain/costModel/resolve";
+import type { CostProfile } from "../../domain/costModel/types.js";
+import { resolveCostProfileFromConfig } from "../../domain/costModel/resolve.js";
 
 // ✅ persistence stores
-import { CostModelOverridesStore } from "../../storage/costModelOverridesStore";
-import { ActionPlanStateStore } from "../../storage/actionPlanStateStore";
+import { CostModelOverridesStore } from "../../storage/costModelOverridesStore.js";
+import { ActionPlanStateStore } from "../../storage/actionPlanStateStore.js";
 
 export type ShopifyCtx = {
   // legacy single-shop (keeps existing routes/tests working)

@@ -1,6 +1,6 @@
 // src/domain/health/profitHealth.scoring.ts
-import type { ProfitHealthConfig, } from "./healthConfig";
-import type { HealthStatus } from "./types";
+import type { ProfitHealthConfig, } from "./healthConfig.js";
+import type { HealthStatus } from "./types.js";
 
 export type ProfitHealthGrade = "A" | "B" | "C" | "D" | "F";
 

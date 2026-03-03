@@ -1,7 +1,7 @@
 // src/domain/profitDaily.ts
-import { round2 } from "../utils/money";
-import { calcBreakEvenRoas, calcContributionMarginPct } from "./metrics";
-import { allocateFixedCostsForOrders, type FixedCostsMode } from "./profit/fixedCosts";
+import { round2 } from "../utils/money.js";
+import { calcBreakEvenRoas, calcContributionMarginPct } from "./metrics.js";
+import { allocateFixedCostsForOrders, type FixedCostsMode } from "./profit/fixedCosts.js";
 
 export function buildDailyProfit(params: {
   shop: string;

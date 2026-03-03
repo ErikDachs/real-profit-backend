@@ -1,9 +1,9 @@
 // src/routes/shopify/costModel.route.ts
 import type { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
+import type { ShopifyCtx } from "./ctx.js";
 
-import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve";
-import type { CostProfileOverrides } from "../../domain/costModel/types";
+import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
+import type { CostProfileOverrides } from "../../domain/costModel/types.js";
 
 function mergeOverrides(a?: CostProfileOverrides, b?: CostProfileOverrides): CostProfileOverrides | undefined {
   if (!a && !b) return undefined;

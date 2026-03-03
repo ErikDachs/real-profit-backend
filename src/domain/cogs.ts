@@ -1,6 +1,6 @@
 // src/domain/cogs.ts
-import { chunk } from "../utils/math";
-import type { CogsOverridesStore } from "../storage/cogsOverridesStore";
+import { chunk } from "../utils/math.js";
+import type { CogsOverridesStore } from "../storage/cogsOverridesStore.js";
 
 export type VariantQty = { variantId: number; qty: number };
 

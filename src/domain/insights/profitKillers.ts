@@ -1,22 +1,22 @@
 // src/domain/insights/profitKillers.ts
-import { round2 } from "../../utils/money";
-import { buildProfitImpact } from "../profitImpact";
+import { round2 } from "../../utils/money.js";
+import { buildProfitImpact } from "../profitImpact.js";
 
-import type { ProfitKillersParams } from "./types";
-import { buildAdIntelligence } from "./adIntelligence";
-import { buildShippingSubsidyInsight } from "./shippingSubsidy";
-import { DEFAULTS, buildActions, periodLabel, safeDiv } from "./utils";
-import { buildUnifiedOpportunityRanking } from "../opportunities/unifiedOpportunityRanking";
-import { buildImpactSimulation } from "../simulations/impactSimulation";
+import type { ProfitKillersParams } from "./types.js";
+import { buildAdIntelligence } from "./adIntelligence.js";
+import { buildShippingSubsidyInsight } from "./shippingSubsidy.js";
+import { DEFAULTS, buildActions, periodLabel, safeDiv } from "./utils.js";
+import { buildUnifiedOpportunityRanking } from "../opportunities/unifiedOpportunityRanking.js";
+import { buildImpactSimulation } from "../simulations/impactSimulation.js";
 
-import { detectMarginDrift } from "./marginDrift";
-import { computeBreakEvenRisk } from "./breakEvenRisk";
+import { detectMarginDrift } from "./marginDrift.js";
+import { computeBreakEvenRisk } from "./breakEvenRisk.js";
 
-import { computeTotals, computeContributionMarginPct, computeBreakEvenRoas, buildTotalsOut } from "./profitKillers.totals";
-import { enrichOrdersWithReasons, pickWorstOrders, pickBestOrders } from "./profitKillers.orders";
-import { pickWorstProducts, pickBestProducts } from "./profitKillers.products";
-import { buildDailyFromOrders } from "./profitKillers.daily";
-import { buildUnifiedRankingInputs } from "./profitKillers.unified";
+import { computeTotals, computeContributionMarginPct, computeBreakEvenRoas, buildTotalsOut } from "./profitKillers.totals.js";
+import { enrichOrdersWithReasons, pickWorstOrders, pickBestOrders } from "./profitKillers.orders.js";
+import { pickWorstProducts, pickBestProducts } from "./profitKillers.products.js";
+import { buildDailyFromOrders } from "./profitKillers.daily.js";
+import { buildUnifiedRankingInputs } from "./profitKillers.unified.js";
 
 export function buildProfitKillersInsights(params: ProfitKillersParams) {
   const { shop, days, orders, products, missingCogsCount, adSpend, currentRoas, shippingTotals, fixedCosts } = params;

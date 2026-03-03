@@ -1,7 +1,7 @@
 // src/domain/opportunities/deepDive/deepDive.worstOrders.ts
-import { round2 } from "../../../utils/money";
-import type { OpportunityType } from "../types";
-import type { OrderProfitRow } from "../../insights/types";
+import { round2 } from "../../../utils/money.js";
+import type { OpportunityType } from "../types.js";
+import type { OrderProfitRow } from "../../insights/types.js";
 
 function shippingImpactValue(o: any): number {
   const impactRaw = (o as any).shippingImpact;

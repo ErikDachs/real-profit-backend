@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isMissingUnitCost } from "./cogsGovernance";
+import { isMissingUnitCost } from "./cogsGovernance.js";
 
 describe("isMissingUnitCost (SSOT governance) - Option C", () => {
   it("undefined => missing ALWAYS", () => {

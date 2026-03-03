@@ -1,7 +1,7 @@
 // src/routes/shopify/webhooks.route.ts
 import type { FastifyInstance } from "fastify";
 import crypto from "node:crypto";
-import { ShopsStore, isValidShopDomain } from "../../storage/shopsStore";
+import { ShopsStore, isValidShopDomain } from "../../storage/shopsStore.js";
 
 function verifyWebhookHmac(params: { rawBody: Buffer; hmacHeader: string; secret: string }): boolean {
   const { rawBody, hmacHeader, secret } = params;

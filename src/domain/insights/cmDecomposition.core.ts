@@ -1,7 +1,7 @@
 // src/domain/insights/cmDecomposition.core.ts
-import { round2 } from "../../utils/money";
-import type { CmAgg, CmDecompositionDriver, CmDecompositionResult } from "./cmDecomposition";
-import { safeDiv, marginPct, roundDriver } from "./cmDecomposition.utils";
+import { round2 } from "../../utils/money.js";
+import type { CmAgg, CmDecompositionDriver, CmDecompositionResult } from "./cmDecomposition.js";
+import { safeDiv, marginPct, roundDriver } from "./cmDecomposition.utils.js";
 
 type DecompositionMode = "CM" | "OPERATING";
 

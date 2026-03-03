@@ -1,6 +1,6 @@
 // src/domain/opportunities/scoring.ts
-import { round2 } from "../../utils/money";
-import type { OpportunityType, UnifiedOpportunity, OpportunitySeverity } from "./types";
+import { round2 } from "../../utils/money.js";
+import type { OpportunityType, UnifiedOpportunity, OpportunitySeverity } from "./types.js";
 
 function clamp01(x: number) {
   if (!Number.isFinite(x)) return 0;

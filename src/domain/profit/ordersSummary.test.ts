@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildOrdersSummary } from "./ordersSummary";
-import { calcPaymentFees } from "./fees";
-import { calcContributionMargin, calcBreakEvenRoas, calcContributionMarginPct } from "../metrics";
+import { buildOrdersSummary } from "./ordersSummary.js";
+import { calcPaymentFees } from "./fees.js";
+import { calcContributionMargin, calcBreakEvenRoas, calcContributionMarginPct } from "../metrics.js";
 
 const dummyShopifyGET: any = async () => {
   throw new Error("shopifyGET should not be called in these tests");

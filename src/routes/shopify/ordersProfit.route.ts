@@ -1,13 +1,13 @@
 // src/routes/shopify/ordersProfit.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
-import { round2 } from "../../utils/money";
-import { calculateOrderProfit, allocateFixedCostsForOrders } from "../../domain/profit";
-import { allocateAdSpendForOrders, computeProfitAfterAds } from "../../domain/profit/ads";
-import { parseDays, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers";
+import type { ShopifyCtx } from "./ctx.js";
+import { round2 } from "../../utils/money.js";
+import { calculateOrderProfit, allocateFixedCostsForOrders } from "../../domain/profit.js";
+import { allocateAdSpendForOrders, computeProfitAfterAds } from "../../domain/profit/ads.js";
+import { parseDays, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
 
 // ✅ SSOT Cost Model Engine
-import { resolveCostProfile } from "../../domain/costModel/resolve";
+import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
 type OrderProfitRow = {
   id: number | string;

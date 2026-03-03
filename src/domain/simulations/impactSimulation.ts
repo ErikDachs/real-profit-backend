@@ -1,8 +1,8 @@
 // src/domain/simulations/impactSimulation.ts
 
-import { round2 } from "../../utils/money";
-import type { UnifiedOpportunity, OpportunityType } from "../opportunities/types";
-import type { OpportunitySimulation, SimulationScenario } from "./types";
+import { round2 } from "../../utils/money.js";
+import type { UnifiedOpportunity, OpportunityType } from "../opportunities/types.js";
+import type { OpportunitySimulation, SimulationScenario } from "./types.js";
 
 function annualize(monthly: number) {
   return round2(monthly * 12);

@@ -1,7 +1,7 @@
 // src/domain/insights/shippingSubsidy.ts
-import { round2 } from "../../utils/money";
-import type { ShippingSubsidyInsight, ShippingTotalsInput } from "./types";
-import { periodLabel } from "./utils";
+import { round2 } from "../../utils/money.js";
+import type { ShippingSubsidyInsight, ShippingTotalsInput } from "./types.js";
+import { periodLabel } from "./utils.js";
 
 export function buildShippingSubsidyInsight(params: {
   currency: string;

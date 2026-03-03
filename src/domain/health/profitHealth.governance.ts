@@ -1,5 +1,5 @@
 // src/domain/health/profitHealth.governance.ts
-import type { ProfitHealthConfig } from "./healthConfig";
+import type { ProfitHealthConfig } from "./healthConfig.js";
 
 /**
  * ✅ Launch-ready data-quality governance:

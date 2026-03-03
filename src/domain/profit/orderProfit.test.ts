@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateOrderProfit } from "./orderProfit";
+import { calculateOrderProfit } from "./orderProfit.js";
 
 // Minimaler Dummy – wird nicht genutzt, solange wir unitCostByVariant setzen.
 const dummyCogsService: any = {

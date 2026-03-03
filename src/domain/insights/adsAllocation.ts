@@ -1,6 +1,6 @@
 // src/domain/insights/adsAllocation.ts
-import { round2 } from "../../utils/money";
-import { allocateAdSpendForOrders, allocateAdSpendForProducts } from "../profit/ads";
+import { round2 } from "../../utils/money.js";
+import { allocateAdSpendForOrders, allocateAdSpendForProducts } from "../profit/ads.js";
 
 type Key = number | string;
 

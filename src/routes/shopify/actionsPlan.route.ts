@@ -1,26 +1,26 @@
 // src/routes/shopify/actionsPlan.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
+import type { ShopifyCtx } from "./ctx.js";
 
-import { calculateOrderProfit, buildProductsProfit, allocateFixedCostsForOrders } from "../../domain/profit";
-import { buildDailyProfit } from "../../domain/profitDaily";
+import { calculateOrderProfit, buildProductsProfit, allocateFixedCostsForOrders } from "../../domain/profit.js";
+import { buildDailyProfit } from "../../domain/profitDaily.js";
 
-import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers";
+import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
 
-import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation";
-import { buildProfitKillersInsights } from "../../domain/insights";
+import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation.js";
+import { buildProfitKillersInsights } from "../../domain/insights.js";
 
-import { buildOpportunityDeepDive } from "../../domain/opportunities/deepDive";
-import type { OpportunityType } from "../../domain/opportunities/types";
+import { buildOpportunityDeepDive } from "../../domain/opportunities/deepDive.js";
+import type { OpportunityType } from "../../domain/opportunities/types.js";
 
-import { buildActionPlan } from "../../domain/actions";
+import { buildActionPlan } from "../../domain/actions.js";
 
 // SSOT Cost Model Engine
-import { resolveCostProfile } from "../../domain/costModel/resolve";
-import { round2 } from "../../utils/money";
+import { resolveCostProfile } from "../../domain/costModel/resolve.js";
+import { round2 } from "../../utils/money.js";
 
 // Scenario sims (SSOT re-run)
-import { runOpportunityScenarioSimulations } from "../../domain/simulations/runScenarioPresets";
+import { runOpportunityScenarioSimulations } from "../../domain/simulations/runScenarioPresets.js";
 
 // ---------
 // Deterministic Action ID (SSOT for status mapping)

@@ -1,14 +1,14 @@
 // src/domain/opportunities/deepDive/drivers/index.ts
-import type { OpportunityType } from "../../types";
-import type { OrderProfitRow, ProductProfitRow } from "../../../insights/types";
-import type { DeepDiveDriver } from "../types";
+import type { OpportunityType } from "../../types.js";
+import type { OrderProfitRow, ProductProfitRow } from "../../../insights/types.js";
+import type { DeepDiveDriver } from "../types.js";
 
-import { buildRefundDrivers } from "./refunds";
-import { buildFeeDrivers } from "./fees";
-import { buildShippingDrivers } from "./shipping";
-import { buildMissingCogsDrivers } from "./missingCogs";
-import { buildNegativeCmDrivers } from "./negativeCm";
-import { buildLowMarginDrivers } from "./lowMargin";
+import { buildRefundDrivers } from "./refunds.js";
+import { buildFeeDrivers } from "./fees.js";
+import { buildShippingDrivers } from "./shipping.js";
+import { buildMissingCogsDrivers } from "./missingCogs.js";
+import { buildNegativeCmDrivers } from "./negativeCm.js";
+import { buildLowMarginDrivers } from "./lowMargin.js";
 
 export function mkDrivers(params: {
   type: OpportunityType;

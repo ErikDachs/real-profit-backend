@@ -1,12 +1,12 @@
 // src/routes/shopify/orderAudit.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
+import type { ShopifyCtx } from "./ctx.js";
 
-import { calculateOrderProfit, extractVariantQtyFromOrder } from "../../domain/profit";
-import { round2 } from "../../utils/money";
+import { calculateOrderProfit, extractVariantQtyFromOrder } from "../../domain/profit.js";
+import { round2 } from "../../utils/money.js";
 
 // ✅ SSOT Cost Model Engine
-import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve";
+import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
 
 function parseOrderId(raw: any): { ok: true; id: string } | { ok: false; status: number; error: string } {
   const s = String(raw ?? "").trim();

@@ -20,7 +20,7 @@ vi.mock("./ads", () => {
   };
 });
 
-import { buildProductsProfit } from "./productsProfit";
+import { buildProductsProfit } from "./productsProfit.js";
 
 const dummyShopifyGET: any = async () => {
   throw new Error("shopifyGET should not be called in these tests");

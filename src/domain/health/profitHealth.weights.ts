@@ -1,7 +1,7 @@
 // src/domain/health/profitHealth.weights.ts
-import { round2 } from "../../utils/money";
-import type { HealthDriver, HealthDriverType } from "./types";
-import { clamp } from "./profitHealth.scoring";
+import { round2 } from "../../utils/money.js";
+import type { HealthDriver, HealthDriverType } from "./types.js";
+import { clamp } from "./profitHealth.scoring.js";
 
 export function normalizeWeights<T extends Record<string, number>>(weights: T): Record<keyof T, number> {
   const entries = Object.entries(weights).filter(([, v]) => Number.isFinite(v) && v > 0);

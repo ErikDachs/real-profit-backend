@@ -1,5 +1,5 @@
 // src/domain/insights/profitKillers.totals.ts
-import { round2 } from "../../utils/money";
+import { round2 } from "../../utils/money.js";
 
 export type ProfitKillersTotals = {
   orders: number;

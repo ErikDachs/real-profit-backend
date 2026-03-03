@@ -1,6 +1,6 @@
 // src/domain/insights/utils.ts
-import { round2 } from "../../utils/money";
-import type { OrderProfitRow, Reason } from "./types";
+import { round2 } from "../../utils/money.js";
+import type { OrderProfitRow, Reason } from "./types.js";
 
 export const DEFAULTS = {
   HIGH_REFUNDS_PCT: 10,

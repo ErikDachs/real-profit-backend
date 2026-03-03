@@ -4,7 +4,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import env from "@fastify/env";
-import { registerShopifyRoutes } from "./routes/shopify";
+import { registerShopifyRoutes } from "./routes/shopify.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: false });

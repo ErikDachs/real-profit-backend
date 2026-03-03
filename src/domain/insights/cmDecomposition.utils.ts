@@ -1,6 +1,6 @@
 // src/domain/insights/cmDecomposition.utils.ts
-import { round2 } from "../../utils/money";
-import type { CmDecompositionDriver } from "./cmDecomposition";
+import { round2 } from "../../utils/money.js";
+import type { CmDecompositionDriver } from "./cmDecomposition.js";
 
 export function safeDiv(a: number, b: number): number {
   if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return 0;

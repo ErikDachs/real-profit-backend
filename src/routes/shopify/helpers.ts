@@ -1,10 +1,10 @@
 // src/routes/shopify/helpers.ts
-import { round2, toNumber } from "../../utils/money";
-import type { CogsService } from "../../domain/cogs";
-import { extractVariantQtyFromOrder } from "../../domain/profit/variants";
-import type { CostProfileOverrides } from "../../domain/costModel/types";
-import { costOverridesFromAny } from "../../domain/costModel/resolve";
-import { isValidShopDomain } from "../../storage/shopsStore";
+import { round2, toNumber } from "../../utils/money.js";
+import type { CogsService } from "../../domain/cogs.js";
+import { extractVariantQtyFromOrder } from "../../domain/profit/variants.js";
+import type { CostProfileOverrides } from "../../domain/costModel/types.js";
+import { costOverridesFromAny } from "../../domain/costModel/resolve.js";
+import { isValidShopDomain } from "../../storage/shopsStore.js";
 
 export function parseShop(query: any, fallback?: string): string {
   const shopRaw = query?.shop;

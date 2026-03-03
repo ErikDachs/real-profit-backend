@@ -1,6 +1,6 @@
 // src/domain/opportunities/unifiedOpportunityRanking.test.ts
 import { describe, it, expect } from "vitest";
-import { buildUnifiedOpportunityRanking } from "./unifiedOpportunityRanking";
+import { buildUnifiedOpportunityRanking } from "./unifiedOpportunityRanking.js";
 
 function assertScoreSortedDesc(items: any[]) {
   for (let i = 1; i < items.length; i++) {

@@ -1,11 +1,11 @@
 // src/domain/health/profitHealth.ts
-import { round2 } from "../../utils/money";
-import { getDefaultProfitHealthConfig, type ProfitHealthConfig } from "./healthConfig";
-import type { ProfitHealth, HealthDriver } from "./types";
+import { round2 } from "../../utils/money.js";
+import { getDefaultProfitHealthConfig, type ProfitHealthConfig } from "./healthConfig.js";
+import type { ProfitHealth, HealthDriver } from "./types.js";
 
-import { clamp, pctOrNaN, scoreHigherIsBetter, scoreLowerIsBetter, statusFromScore } from "./profitHealth.scoring";
-import { normalizeWeights, impactFrom, mkDriver } from "./profitHealth.weights";
-import { applyMissingCogsCap } from "./profitHealth.governance";
+import { clamp, pctOrNaN, scoreHigherIsBetter, scoreLowerIsBetter, statusFromScore } from "./profitHealth.scoring.js";
+import { normalizeWeights, impactFrom, mkDriver } from "./profitHealth.weights.js";
+import { applyMissingCogsCap } from "./profitHealth.governance.js";
 
 export function computeProfitHealthFromSummary(params: {
   grossSales: number;

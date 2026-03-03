@@ -1,13 +1,13 @@
 // src/routes/shopify/ordersSummary.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
-import { round2 } from "../../utils/money";
-import { buildOrdersSummary } from "../../domain/profit";
-import { computeProfitHealthFromSummary } from "../../domain/health/profitHealth";
-import { parseDays, effectiveCostOverrides } from "./helpers";
+import type { ShopifyCtx } from "./ctx.js";
+import { round2 } from "../../utils/money.js";
+import { buildOrdersSummary } from "../../domain/profit.js";
+import { computeProfitHealthFromSummary } from "../../domain/health/profitHealth.js";
+import { parseDays, effectiveCostOverrides } from "./helpers.js";
 
 // ✅ SSOT Cost Model Engine
-import { resolveCostProfile } from "../../domain/costModel/resolve";
+import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
 export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/orders/summary", async (req, reply) => {

@@ -1,12 +1,12 @@
 // src/routes/shopify/profitScenarios.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
-import { round2 } from "../../utils/money";
-import { buildOrdersSummary } from "../../domain/profit";
-import { parseDays } from "./helpers";
+import type { ShopifyCtx } from "./ctx.js";
+import { round2 } from "../../utils/money.js";
+import { buildOrdersSummary } from "../../domain/profit.js";
+import { parseDays } from "./helpers.js";
 
-import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve";
-import { buildProfitScenarioResult } from "../../domain/simulations/profitScenarioSimulation";
+import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
+import { buildProfitScenarioResult } from "../../domain/simulations/profitScenarioSimulation.js";
 
 function mergeDeepShallow(a: any, b: any) {
   // minimal deterministic merge for our overrides shape

@@ -1,6 +1,6 @@
 // src/domain/insights/marginDrift.ts
-import { round2 } from "../../utils/money";
-import { decomposeCmDrift, type CmAgg, type CmDecompositionResult } from "./cmDecomposition";
+import { round2 } from "../../utils/money.js";
+import { decomposeCmDrift, type CmAgg, type CmDecompositionResult } from "./cmDecomposition.js";
 
 export type DailyProfitRowLike = {
   day: string; // YYYY-MM-DD

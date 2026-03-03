@@ -1,5 +1,5 @@
 // src/domain/profit/ads.ts
-import { round2 } from "../../utils/money";
+import { round2 } from "../../utils/money.js";
 
 export type AdSpendMode = "BY_NET_SALES" | "PER_ORDER";
 

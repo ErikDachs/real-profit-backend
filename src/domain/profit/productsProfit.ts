@@ -1,11 +1,11 @@
 // src/domain/profit/productsProfit.ts
-import { round2 } from "../../utils/money";
-import type { CogsService, VariantQty } from "../cogs";
-import { extractRefundsFromOrder } from "./refunds";
-import { allocateAdSpendForProducts, computeProfitAfterAds } from "./ads";
+import { round2 } from "../../utils/money.js";
+import type { CogsService, VariantQty } from "../cogs.js";
+import { extractRefundsFromOrder } from "./refunds.js";
+import { allocateAdSpendForProducts, computeProfitAfterAds } from "./ads.js";
 
 // ✅ NEW
-import type { CostProfile } from "../costModel/types";
+import type { CostProfile } from "../costModel/types.js";
 
 export async function buildProductsProfit(params: {
   shop: string;

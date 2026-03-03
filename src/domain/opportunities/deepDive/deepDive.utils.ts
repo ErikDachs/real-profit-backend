@@ -1,8 +1,8 @@
 // src/domain/opportunities/deepDive/deepDive.utils.ts
-import { round2 } from "../../../utils/money";
-import { safeDiv } from "../../insights/utils";
-import type { OpportunityType, UnifiedOpportunity } from "../types";
-import type { DeepDiveDriver } from "./types";
+import { round2 } from "../../../utils/money.js";
+import { safeDiv } from "../../insights/utils.js";
+import type { OpportunityType, UnifiedOpportunity } from "../types.js";
+import type { DeepDiveDriver } from "./types.js";
 
 export function annualize(monthly: number) {
   return round2(Number(monthly || 0) * 12);

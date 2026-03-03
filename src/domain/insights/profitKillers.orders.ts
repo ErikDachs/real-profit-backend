@@ -1,6 +1,6 @@
 // src/domain/insights/profitKillers.orders.ts
-import { round2 } from "../../utils/money";
-import { safeDiv, computeOrderReasons } from "./utils";
+import { round2 } from "../../utils/money.js";
+import { safeDiv, computeOrderReasons } from "./utils.js";
 
 export function enrichOrdersWithReasons(orders: Array<any>) {
   return orders.map((o) => {

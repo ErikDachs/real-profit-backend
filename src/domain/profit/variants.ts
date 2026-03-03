@@ -1,5 +1,5 @@
 // src/domain/profit/variants.ts
-import type { VariantQty } from "../cogs";
+import type { VariantQty } from "../cogs.js";
 
 function toNum(v: any): number {
   const n = Number(v);

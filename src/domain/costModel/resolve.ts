@@ -1,12 +1,12 @@
 // src/domain/costModel/resolve.ts
-import { toNumber } from "../../utils/money";
-import { DEFAULT_COST_PROFILE } from "./defaults";
-import type { CostProfile, CostProfileOverrides, ResolvedCostProfile, FixedCostMonthlyItem } from "./types";
+import { toNumber } from "../../utils/money.js";
+import { DEFAULT_COST_PROFILE } from "./defaults.js";
+import type { CostProfile, CostProfileOverrides, ResolvedCostProfile, FixedCostMonthlyItem } from "./types.js";
 
-import { clampNonNegative, clampPositive, isAdMode, isFixedAllocMode } from "./resolve.utils";
-import { buildFingerprint } from "./fingerprint";
-import { sanitizeMonthlyItem, computeFixedCostsMonthlyTotal } from "./fixedCosts.monthlyItems";
-export { costOverridesFromAny } from "./overrides.parse";
+import { clampNonNegative, clampPositive, isAdMode, isFixedAllocMode } from "./resolve.utils.js";
+import { buildFingerprint } from "./fingerprint.js";
+import { sanitizeMonthlyItem, computeFixedCostsMonthlyTotal } from "./fixedCosts.monthlyItems.js";
+export { costOverridesFromAny } from "./overrides.parse.js";
 
 /**
  * Base profile derived from ENV/app config only.

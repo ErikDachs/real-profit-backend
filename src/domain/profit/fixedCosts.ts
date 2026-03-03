@@ -1,5 +1,5 @@
 // src/domain/profit/fixedCosts.ts
-import { round2 } from "../../utils/money";
+import { round2 } from "../../utils/money.js";
 
 export type FixedCostsMode = "PER_ORDER" | "BY_NET_SALES";
 

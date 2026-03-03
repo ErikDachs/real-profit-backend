@@ -1,8 +1,8 @@
 // src/routes/shopify/actionsState.route.ts
 import type { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
+import type { ShopifyCtx } from "./ctx.js";
 
-import type { ActionStatus } from "../../storage/actionPlanStateStore";
+import type { ActionStatus } from "../../storage/actionPlanStateStore.js";
 
 function normalizeStatus(x: any): ActionStatus {
   const s = String(x || "").toUpperCase();

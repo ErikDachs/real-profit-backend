@@ -1,13 +1,13 @@
 // src/routes/shopify/oauth.route.ts
 import type { FastifyInstance } from "fastify";
-import { ShopsStore, ShopsStoreError, isValidShopDomain } from "../../storage/shopsStore";
+import { ShopsStore, ShopsStoreError, isValidShopDomain } from "../../storage/shopsStore.js";
 import {
   buildAuthorizeUrl,
   exchangeCodeForAccessToken,
   randomState,
   verifyShopifyQueryHmac,
   ShopifyOAuthError,
-} from "../../integrations/shopify/oauth";
+} from "../../integrations/shopify/oauth.js";
 
 type OAuthInstallQuery = {
   shop?: string;

@@ -1,5 +1,5 @@
 // src/domain/simulations/scenarioPresets.ts
-import type { OpportunityType } from "../opportunities/types";
+import type { OpportunityType } from "../opportunities/types.js";
 
 /**
  * Deterministic presets: Only scenarios we can simulate via SSOT CostProfile knobs

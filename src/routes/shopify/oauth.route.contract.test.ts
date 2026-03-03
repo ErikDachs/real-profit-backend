@@ -1,6 +1,6 @@
 // src/routes/shopify/oauth.route.contract.test.ts
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { buildApp } from "../../app";
+import { buildApp } from "../../app.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 

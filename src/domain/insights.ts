@@ -6,6 +6,6 @@ export type {
   ShippingTotalsInput,
   ShippingSubsidyInsight,
   Reason,
-} from "./insights/types";
+} from "./insights/types.js";
 
-export { buildProfitKillersInsights } from "./insights/profitKillers";
+export { buildProfitKillersInsights } from "./insights/profitKillers.js";

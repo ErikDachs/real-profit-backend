@@ -1,5 +1,5 @@
 // src/domain/costModel/overrides.parse.ts
-import type { CostProfileOverrides } from "./types";
+import type { CostProfileOverrides } from "./types.js";
 
 /**
  * Helper to build overrides from raw query/body safely.

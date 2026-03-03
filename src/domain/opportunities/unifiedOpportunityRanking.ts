@@ -1,8 +1,8 @@
 // src/domain/opportunities/unifiedOpportunityRanking.ts
-import type { UnifiedOpportunity } from "./types";
-import { round2 } from "../../utils/money";
-import { safeDiv } from "../insights/utils";
-import { scoreOpportunity } from "./scoring";
+import type { UnifiedOpportunity } from "./types.js";
+import { round2 } from "../../utils/money.js";
+import { safeDiv } from "../insights/utils.js";
+import { scoreOpportunity } from "./scoring.js";
 
 function monthlyize(lossInPeriod: number, days: number): number {
   // Deterministic normalization (30-day baseline)

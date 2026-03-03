@@ -1,8 +1,8 @@
 // src/routes/shopify/cogsOverrides.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
-import { buildProductsProfit } from "../../domain/profit";
-import { parseDays, parseOverrideBody } from "./helpers";
+import type { ShopifyCtx } from "./ctx.js";
+import { buildProductsProfit } from "../../domain/profit.js";
+import { parseDays, parseOverrideBody } from "./helpers.js";
 
 export function registerCogsOverridesRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/cogs/overrides", async (_req, reply) => {

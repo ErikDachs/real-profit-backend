@@ -1,11 +1,11 @@
 // src/domain/opportunities/deepDive/buildOpportunityDeepDive.ts
-import { round2 } from "../../../utils/money";
-import type { OpportunityType } from "../types";
-import type { BuildOpportunityDeepDiveParams, OpportunityDeepDive } from "./types";
+import { round2 } from "../../../utils/money.js";
+import type { OpportunityType } from "../types.js";
+import type { BuildOpportunityDeepDiveParams, OpportunityDeepDive } from "./types.js";
 
-import { annualize, lossInPeriodFromMonthly, concentration, findOpportunity } from "./deepDive.utils";
-import { pickWorstOrders } from "./deepDive.worstOrders";
-import { mkDrivers } from "./drivers";
+import { annualize, lossInPeriodFromMonthly, concentration, findOpportunity } from "./deepDive.utils.js";
+import { pickWorstOrders } from "./deepDive.worstOrders.js";
+import { mkDrivers } from "./drivers.js";
 
 export function buildOpportunityDeepDive(params: BuildOpportunityDeepDiveParams): {
   shop: string;

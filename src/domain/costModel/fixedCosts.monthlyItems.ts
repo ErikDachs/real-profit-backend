@@ -1,5 +1,5 @@
 // src/domain/costModel/fixedCosts.monthlyItems.ts
-import type { FixedCostMonthlyItem } from "./types";
+import type { FixedCostMonthlyItem } from "./types.js";
 
 export function sanitizeMonthlyItem(x: any): FixedCostMonthlyItem | null {
   if (!x || typeof x !== "object") return null;

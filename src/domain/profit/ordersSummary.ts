@@ -1,15 +1,15 @@
 // src/domain/profit/ordersSummary.ts
-import { round2 } from "../../utils/money";
-import type { CogsService, VariantQty } from "../cogs";
-import { calcContributionMargin, calcContributionMarginPct, calcBreakEvenRoas } from "../metrics";
-import { extractRefundsFromOrder } from "./refunds";
-import { extractShippingRevenueFromOrder } from "./shipping";
-import { calcPaymentFees } from "./fees";
-import { extractVariantQtyFromOrder, getOrderLineItemFacts, orderIsGiftCardOnly } from "./variants";
-import { isMissingUnitCost } from "./cogsGovernance";
+import { round2 } from "../../utils/money.js";
+import type { CogsService, VariantQty } from "../cogs.js";
+import { calcContributionMargin, calcContributionMarginPct, calcBreakEvenRoas } from "../metrics.js";
+import { extractRefundsFromOrder } from "./refunds.js";
+import { extractShippingRevenueFromOrder } from "./shipping.js";
+import { calcPaymentFees } from "./fees.js";
+import { extractVariantQtyFromOrder, getOrderLineItemFacts, orderIsGiftCardOnly } from "./variants.js";
+import { isMissingUnitCost } from "./cogsGovernance.js";
 
 // ✅ Cost Model
-import type { CostProfile } from "../costModel/types";
+import type { CostProfile } from "../costModel/types.js";
 
 export async function buildOrdersSummary(params: {
   shop: string;

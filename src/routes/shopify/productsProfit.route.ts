@@ -1,12 +1,12 @@
 // src/routes/shopify/productsProfit.route.ts
 import { FastifyInstance } from "fastify";
-import type { ShopifyCtx } from "./ctx";
-import { round2 } from "../../utils/money";
-import { buildProductsProfit } from "../../domain/profit";
-import { parseDays } from "./helpers";
+import type { ShopifyCtx } from "./ctx.js";
+import { round2 } from "../../utils/money.js";
+import { buildProductsProfit } from "../../domain/profit.js";
+import { parseDays } from "./helpers.js";
 
 // ✅ SSOT Cost Model Engine
-import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve";
+import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
 
 export function registerProductsProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/orders/products/profit", async (req, reply) => {

@@ -1,5 +1,5 @@
 // src/domain/insights/adIntelligence.ts
-import { round2 } from "../../utils/money";
+import { round2 } from "../../utils/money.js";
 
 function calcTargetRoasForProfitPct(params: {
   netAfterRefunds: number;

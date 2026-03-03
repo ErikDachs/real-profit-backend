@@ -1,5 +1,5 @@
 // src/domain/metrics.ts
-import { round2 } from "../utils/money";
+import { round2 } from "../utils/money.js";
 
 export function calcContributionMargin(params: {
   netAfterRefunds: number;

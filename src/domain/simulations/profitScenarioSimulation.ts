@@ -1,5 +1,5 @@
 // src/domain/simulations/profitScenarioSimulation.ts
-import { round2 } from "../../utils/money";
+import { round2 } from "../../utils/money.js";
 
 function safePctChange(base: number, next: number) {
   if (!Number.isFinite(base) || base === 0) return null;

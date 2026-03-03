@@ -1,7 +1,7 @@
 // src/integrations/shopify/oauth.ts
 import crypto from "node:crypto";
 import fetch from "node-fetch";
-import { isValidShopDomain } from "../../storage/shopsStore";
+import { isValidShopDomain } from "../../storage/shopsStore.js";
 
 export class ShopifyOAuthError extends Error {
   constructor(

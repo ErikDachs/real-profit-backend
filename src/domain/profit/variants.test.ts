@@ -1,6 +1,6 @@
 // src/domain/profit/variants.test.ts
 import { describe, it, expect } from "vitest";
-import { getOrderLineItemFacts } from "./variants";
+import { getOrderLineItemFacts } from "./variants.js";
 
 describe("getOrderLineItemFacts (SSOT) - unmapped variants governance", () => {
   it("flags unmapped when relevant line items exist but no variant ids can be extracted (gift_card='false' string)", () => {

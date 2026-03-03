@@ -1,5 +1,5 @@
 // src/domain/insights/profitKillers.unified.ts
-import { safeDiv, DEFAULTS } from "./utils";
+import { safeDiv, DEFAULTS } from "./utils.js";
 
 export function buildUnifiedRankingInputs(params: {
   days: number;

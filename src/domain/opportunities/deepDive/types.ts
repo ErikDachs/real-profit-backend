@@ -1,6 +1,6 @@
 // src/domain/opportunities/deepDive/types.ts
-import type { OpportunityType, UnifiedOpportunity } from "../types";
-import type { OrderProfitRow, ProductProfitRow, ShippingTotalsInput } from "../../insights/types";
+import type { OpportunityType, UnifiedOpportunity } from "../types.js";
+import type { OrderProfitRow, ProductProfitRow, ShippingTotalsInput } from "../../insights/types.js";
 
 export type DeepDiveDriver = {
   // stable identifier for UI

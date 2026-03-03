@@ -1,5 +1,5 @@
 // src/domain/costModel/resolve.utils.ts
-import type { AdSpendAllocationMode, FixedCostsAllocationMode } from "./types";
+import type { AdSpendAllocationMode, FixedCostsAllocationMode } from "./types.js";
 
 export function clampNonNegative(n: number, fallback: number) {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
