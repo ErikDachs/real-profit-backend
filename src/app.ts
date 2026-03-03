@@ -47,6 +47,5 @@ export async function buildApp() {
   });
 
   await registerShopifyRoutes(app);
-
   return app;
 }

@@ -38,5 +38,6 @@ export async function buildApp() {
         return { ok: true, service: "backend", ts: new Date().toISOString() };
     });
     await registerShopifyRoutes(app);
+    app.log.info(app.printRoutes());
     return app;
 }
