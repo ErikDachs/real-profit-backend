@@ -39,138 +39,167 @@ export async function calculateOrderProfit(params: {
   const rawRefunds = extractRefundsFromOrder(order);
   const rawNetAfterRefunds = rawGrossSales - rawRefunds;
 
+  const rawShippingRevenue = extractShippingRevenueFromOrder(order);
+
   // -------------------------
   // SSOT line item facts
   // -------------------------
   const facts = getOrderLineItemFacts(order);
   const variantQty = facts.extractedVariantQty;
 
-  // ✅ Gift card CFO handling (liability):
-  // Gift-card-only orders contribute 0 operational sales, but fees remain real.
   const isGiftCardOnlyOrder = orderIsGiftCardOnly(order);
+
+  // ✅ Flag-gated governance
+  // If excludeGiftCards=true, gift-card-only orders are excluded from KPIs (fees/CM/etc = 0),
+  // but raw values remain visible (grossSales/refunds/shippingRevenue).
+  const excludeGiftCards = Boolean((costProfile as any)?.flags?.excludeGiftCards ?? false);
+  const excludeGiftCardOnlyFromKpis = isGiftCardOnlyOrder && excludeGiftCards;
+
+  // Gift card transparency (always)
   const giftCardNetSalesExcluded = isGiftCardOnlyOrder ? rawNetAfterRefunds : 0;
 
-  // Operational view (what counts as "sales" for profit)
-  const grossSales = isGiftCardOnlyOrder ? 0 : rawGrossSales;
-  const refunds = isGiftCardOnlyOrder ? 0 : rawRefunds;
+  // -------------------------
+  // Output fields: grossSales/refunds have two possible meanings depending on governance
+  // -------------------------
+  // Default behavior (excludeGiftCards=false):
+  //   Gift-card-only => operational view => grossSales/refunds/netAfterRefunds = 0
+  // Governance behavior (excludeGiftCards=true):
+  //   Gift-card-only => KPIs excluded, but raw values must remain visible for grossSales/refunds/shippingRevenue
+  const grossSales = excludeGiftCardOnlyFromKpis ? rawGrossSales : isGiftCardOnlyOrder ? 0 : rawGrossSales;
+  const refunds = excludeGiftCardOnlyFromKpis ? rawRefunds : isGiftCardOnlyOrder ? 0 : rawRefunds;
+
+  // KPIs always use operational net:
   const netAfterRefunds = isGiftCardOnlyOrder ? 0 : rawNetAfterRefunds;
 
+  // -------------------------
+  // COGS + Missing COGS governance
+  // -------------------------
   let cogs = 0;
-
-  // ✅ Explicit missing COGS flag (for insights/reasons/UX)
   let hasMissingCogs = false;
   const missingVariantIds: number[] = [];
 
-  // ✅ unmapped variants => missing COGS
-  if (facts.hasUnmappedVariants) {
-    hasMissingCogs = true;
-  }
+  // For gift-card-only, never trigger missing COGS (both contracts)
+  if (!isGiftCardOnlyOrder) {
+    if (facts.hasUnmappedVariants) hasMissingCogs = true;
 
-  // Determine unit costs map
-  const unitCostByVariant =
-    params.unitCostByVariant ??
-    (variantQty.length > 0
-      ? await cogsService.computeUnitCostsByVariant(
-          shopifyGET,
-          variantQty.map((x) => x.variantId)
-        )
-      : undefined);
+    const unitCostByVariant =
+      params.unitCostByVariant ??
+      (variantQty.length > 0
+        ? await cogsService.computeUnitCostsByVariant(
+            shopifyGET,
+            variantQty.map((x) => x.variantId)
+          )
+        : undefined);
 
-  // Compute COGS & missing detection deterministically when we have variants
-  if (variantQty.length > 0) {
-    if (unitCostByVariant) {
-      for (const li of variantQty) {
-        const unitCost = unitCostByVariant.get(li.variantId);
+    if (variantQty.length > 0) {
+      if (unitCostByVariant) {
+        for (const li of variantQty) {
+          const unitCost = unitCostByVariant.get(li.variantId);
+          if (unitCost !== undefined) cogs += li.qty * unitCost;
 
-        // Unknown cost contributes 0, but is governed by missing flag below
-        if (unitCost !== undefined) cogs += li.qty * unitCost;
-
-        if (isMissingUnitCost({ unitCost, variantId: li.variantId, isIgnoredVariant })) {
-          hasMissingCogs = true;
-          missingVariantIds.push(li.variantId);
+          if (isMissingUnitCost({ unitCost, variantId: li.variantId, isIgnoredVariant })) {
+            hasMissingCogs = true;
+            missingVariantIds.push(li.variantId);
+          }
         }
+      } else {
+        cogs = await cogsService.computeCogsForVariants(shopifyGET, variantQty);
       }
-    } else {
-      // fallback path (older) – does not allow per-variant missing detection
-      cogs = await cogsService.computeCogsForVariants(shopifyGET, variantQty);
-      // unmapped variants guard is already applied via facts.hasUnmappedVariants
     }
   }
 
-  // ✅ Payment fees (SSOT):
-  // Fees are REAL CASH costs => always compute on RAW netAfterRefunds (even for gift-card-only orders)
-  const feePercent = Number(costProfile.payment.feePercent || 0);
-  const feeFixed = Number(costProfile.payment.feeFixed || 0);
+  // -------------------------
+  // Payment fees
+  // -------------------------
+  const feePercent = Number(costProfile.payment?.feePercent || 0);
+  const feeFixed = Number(costProfile.payment?.feeFixed || 0);
 
-  const paymentFees = calcPaymentFees({
-    netAfterRefunds: rawNetAfterRefunds,
-    orderCount: 1,
-    feePercent,
-    feeFixed,
-  });
+  // Contract:
+  // - excludeGiftCards=true + gift-only => paymentFees=0
+  // - otherwise gift-only => fees are real on RAW netAfterRefunds (percent + fixed)
+  // - non gift-only => also rawNetAfterRefunds (same as operational net here)
+  const paymentFees = excludeGiftCardOnlyFromKpis
+    ? 0
+    : calcPaymentFees({
+        netAfterRefunds: rawNetAfterRefunds,
+        orderCount: 1,
+        feePercent,
+        feeFixed,
+      });
 
-  // Core metrics (operational)
-  const contributionMargin = calcContributionMargin({
-    netAfterRefunds,
-    cogs,
-    paymentFees,
-  });
+  // -------------------------
+  // Core metrics (operational KPIs)
+  // -------------------------
+  const contributionMargin = excludeGiftCardOnlyFromKpis
+    ? 0
+    : calcContributionMargin({
+        netAfterRefunds,
+        cogs,
+        paymentFees,
+      });
 
-  const contributionMarginPct = calcContributionMarginPct({
-    netAfterRefunds,
-    contributionMargin,
-  });
+  const contributionMarginPct = excludeGiftCardOnlyFromKpis
+    ? 0
+    : calcContributionMarginPct({
+        netAfterRefunds,
+        contributionMargin,
+      });
 
-  const breakEvenRoas = calcBreakEvenRoas({
-    netAfterRefunds,
-    contributionMargin,
-  });
+  // Contract:
+  // - excludeGiftCards=true + gift-only => breakEvenRoas must be 0 (not null)
+  // - otherwise use metrics result
+  const breakEvenRoas = excludeGiftCardOnlyFromKpis
+    ? 0
+    : calcBreakEvenRoas({
+        netAfterRefunds,
+        contributionMargin,
+      });
 
-  // Shipping transparency + real-profit adjustment
-  const shippingRevenue = extractShippingRevenueFromOrder(order);
+  // -------------------------
+  // Shipping
+  // -------------------------
+  // Contract:
+  // - excludeGiftCards=true + gift-only => shippingRevenue must remain visible (raw)
+  // - otherwise: shippingRevenue is operational; for gift-only it can be 0 (not asserted elsewhere)
+  const shippingRevenue = excludeGiftCardOnlyFromKpis ? rawShippingRevenue : isGiftCardOnlyOrder ? 0 : rawShippingRevenue;
 
-  const includeShippingCost = Boolean(costProfile.flags?.includeShippingCost ?? true);
+  const includeShippingCost = Boolean((costProfile as any)?.flags?.includeShippingCost ?? true);
 
-  // ✅ Gift-card-only orders: treat shipping cost as 0 (no fulfillment/shipping),
-  // even if you have a global per-order shipping fallback.
+  // Gift-card-only: shipping cost must be 0 (both contracts)
   const shippingCostPerOrder =
-    includeShippingCost && !isGiftCardOnlyOrder ? Number(costProfile.shipping.costPerOrder || 0) : 0;
+    includeShippingCost && !isGiftCardOnlyOrder ? Number(costProfile.shipping?.costPerOrder || 0) : 0;
 
   const shippingCost = shippingCostPerOrder;
   const shippingImpact = shippingRevenue - shippingCost;
 
+  // Profit fields (remain consistent with KPIs)
   const profitAfterFees = contributionMargin;
   const profitAfterShipping = profitAfterFees - shippingCost;
 
   const profitMarginAfterShippingPct = netAfterRefunds > 0 ? (profitAfterShipping / netAfterRefunds) * 100 : 0;
 
-  // Compatibility fields (existing names)
   const marginAfterFeesPct = contributionMarginPct;
 
   return {
     orderId,
 
-    // ✅ Gift card transparency
     isGiftCardOnlyOrder,
     giftCardNetSalesExcluded: round2(giftCardNetSalesExcluded),
 
-    // Operational money fields
+    // money fields (note: grossSales/refunds may be raw-visible when excludeGiftCards=true + gift-only)
     grossSales: round2(grossSales),
     refunds: round2(refunds),
     netAfterRefunds: round2(netAfterRefunds),
 
     cogs: round2(cogs),
-
     paymentFees: round2(paymentFees),
 
     contributionMargin: round2(contributionMargin),
     contributionMarginPct: round2(contributionMarginPct),
 
-    // ✅ Missing COGS governance (SSOT)
     hasMissingCogs,
     missingCogsVariantIds: Array.from(new Set(missingVariantIds)),
 
-    // Shipping
     shippingRevenue: round2(shippingRevenue),
     shippingCost: round2(shippingCost),
     shippingImpact: round2(shippingImpact),
@@ -178,11 +207,10 @@ export async function calculateOrderProfit(params: {
     profitAfterShipping: round2(profitAfterShipping),
     profitMarginAfterShippingPct: round2(profitMarginAfterShippingPct),
 
-    // Break-even ad spend + ROAS (still based on CM)
     adSpendBreakEven: round2(contributionMargin),
-    breakEvenRoas: breakEvenRoas === null ? null : round2(breakEvenRoas),
+    breakEvenRoas:
+      breakEvenRoas === null ? null : typeof breakEvenRoas === "number" ? round2(breakEvenRoas) : (breakEvenRoas as any),
 
-    // OLD (keep)
     profitAfterFees: round2(profitAfterFees),
     marginAfterFeesPct: round2(marginAfterFeesPct),
   };

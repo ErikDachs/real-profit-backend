@@ -1,6 +1,11 @@
 // src/routes/shopify/oauth.route.ts
 import type { FastifyInstance } from "fastify";
-import { ShopsStore, ShopsStoreError, isValidShopDomain } from "../../storage/shopsStore.js";
+import {
+  ShopsStore,
+  ShopsStoreError,
+  isValidShopDomain,
+  normalizeShopDomain,
+} from "../../storage/shopsStore.js";
 import {
   buildAuthorizeUrl,
   exchangeCodeForAccessToken,
@@ -50,7 +55,7 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: OAuthInstallQuery }>("/api/shopify/oauth/install", async (req, reply) => {
     try {
-      const shop = String(req.query.shop || "").trim().toLowerCase();
+      const shop = normalizeShopDomain(req.query.shop || "");
       if (!isValidShopDomain(shop)) {
         reply.status(400);
         return { error: "Invalid shop domain", code: "INVALID_SHOP" };
@@ -77,7 +82,7 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
 
       reply.header("Cache-Control", "no-store");
       reply.code(302);
-return reply.redirect(authorizeUrl);
+      return reply.redirect(authorizeUrl);
     } catch (e: any) {
       if (e instanceof ShopsStoreError) {
         reply.status(e.status);
@@ -91,7 +96,7 @@ return reply.redirect(authorizeUrl);
 
   app.get<{ Querystring: OAuthCallbackQuery }>("/api/shopify/oauth/callback", async (req, reply) => {
     try {
-      const shop = String(req.query.shop || "").trim().toLowerCase();
+      const shop = normalizeShopDomain(req.query.shop || "");
       const code = String(req.query.code || "").trim();
       const state = String(req.query.state || "").trim();
 
@@ -122,6 +127,17 @@ return reply.redirect(authorizeUrl);
       const { status, body } = errReply(e);
       reply.status(status);
       return body;
+    }
+  });
+
+  // ✅ Optional debug endpoint: shows persisted shops, token masked
+  app.get("/api/shopify/debug/shops", async (_req, reply) => {
+    try {
+      const rows = await shopsStore.listMasked();
+      return reply.send({ ok: true, count: rows.length, shops: rows });
+    } catch (e: any) {
+      const { status, body } = errReply(e);
+      return reply.status(status).send(body);
     }
   });
 }

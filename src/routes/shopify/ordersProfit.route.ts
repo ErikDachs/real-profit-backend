@@ -55,6 +55,9 @@ type OrderProfitRow = {
 
   fixedCostAllocated?: number;
   profitAfterFixedCosts?: number;
+
+  // ✅ SSOT alias expected by tests
+  operatingProfit?: number;
 };
 
 export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) {
@@ -72,7 +75,9 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
       // ✅ Select the correct Shopify client + order fetcher
       const shopifyClient = shopFromQuery ? await ctx.createShopifyForShop(shopFromQuery) : ctx.shopify;
 
-      const orders = shopFromQuery ? await ctx.fetchOrdersForShop(shopFromQuery, daysNum) : await ctx.fetchOrders(daysNum);
+      const orders = shopFromQuery
+        ? await ctx.fetchOrdersForShop(shopFromQuery, daysNum)
+        : await ctx.fetchOrders(daysNum);
 
       // ✅ persisted overrides + request overrides (request wins) — SSOT helper
       await ctx.costModelOverridesStore.ensureLoaded();
@@ -198,6 +203,7 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
             ...o,
             fixedCostAllocated,
             profitAfterFixedCosts,
+            operatingProfit: profitAfterFixedCosts, // ✅ SSOT alias
           };
         });
       } else {
@@ -217,18 +223,32 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
             ...(o as any),
             fixedCostAllocated,
             profitAfterFixedCosts,
+            operatingProfit: profitAfterFixedCosts, // ✅ SSOT alias
           } as OrderProfitRow;
         });
 
-        const giftOnlyPatched: OrderProfitRow[] = enrichedGiftOnly.map((o) => ({
-          ...o,
-          fixedCostAllocated: 0,
-          profitAfterFixedCosts: round2(Number(o.profitAfterAdsAndShipping ?? 0)),
-        }));
+        const giftOnlyPatched: OrderProfitRow[] = enrichedGiftOnly.map((o) => {
+          const profitAfterFixedCosts = round2(Number(o.profitAfterAdsAndShipping ?? 0));
+          return {
+            ...o,
+            fixedCostAllocated: 0,
+            profitAfterFixedCosts,
+            operatingProfit: profitAfterFixedCosts, // ✅ SSOT alias
+          };
+        });
 
         const byId = new Map<any, OrderProfitRow>([...allocatedOperational, ...giftOnlyPatched].map((x) => [x.id, x]));
         enriched = enriched.map((o) => byId.get(o.id) ?? o);
       }
+
+      // Safety net: if any row somehow missed alias, set it deterministically
+      enriched = enriched.map((o) => {
+        const pafc = Number(o.profitAfterFixedCosts ?? o.profitAfterAds ?? o.profitAfterFees ?? 0);
+        return {
+          ...o,
+          operatingProfit: Number.isFinite(Number(o.operatingProfit)) ? Number(o.operatingProfit) : round2(pafc),
+        };
+      });
 
       enriched.sort((a, b) => {
         const av = Number(a.profitAfterFixedCosts ?? a.profitAfterAds ?? a.profitAfterFees ?? 0);

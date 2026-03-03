@@ -3,7 +3,7 @@ import { FastifyInstance } from "fastify";
 import { createShopifyClient } from "../../integrations/shopify/client.js";
 import { CogsService } from "../../domain/cogs.js";
 import { CogsOverridesStore } from "../../storage/cogsOverridesStore.js";
-import { ShopsStore } from "../../storage/shopsStore.js";
+import { ShopsStore, normalizeShopDomain } from "../../storage/shopsStore.js";
 
 // ✅ Cost model
 import type { CostProfile } from "../../domain/costModel/types.js";
@@ -42,19 +42,21 @@ export type ShopifyCtx = {
 
 export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx> {
   // Legacy envs (keep tests green)
-  const legacyShop = String(app.config.SHOPIFY_STORE_DOMAIN || "").trim().toLowerCase();
+  const legacyShop = normalizeShopDomain(app.config.SHOPIFY_STORE_DOMAIN || "");
   const legacyToken = String(app.config.SHOPIFY_ADMIN_TOKEN || "").trim();
 
   // ✅ New store for OAuth tokens (MUST match oauth.route.ts DATA_DIR)
   const shopsStore = new ShopsStore({ dataDir: app.config.DATA_DIR });
   await shopsStore.ensureLoaded();
 
-  async function createShopifyForShop(shop: string) {
-    const token = await shopsStore.getAccessTokenOrThrow(shop);
+  async function createShopifyForShop(shopInput: string) {
+    const shop = normalizeShopDomain(shopInput);
+    const token = await shopsStore.getAccessTokenOrThrow(shop); // ✅ refresh-safe internally
     return createShopifyClient({ shopDomain: shop, accessToken: token });
   }
 
-  async function fetchOrdersForShop(shop: string, days: number) {
+  async function fetchOrdersForShop(shopInput: string, days: number) {
+    const shop = normalizeShopDomain(shopInput);
     const shopify = await createShopifyForShop(shop);
 
     const since = new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000).toISOString();
@@ -66,11 +68,12 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     return (json.orders ?? []) as any[];
   }
 
-  async function fetchOrderByIdForShop(shop: string, orderId: string) {
+  async function fetchOrderByIdForShop(shopInput: string, orderId: string) {
+    const shop = normalizeShopDomain(shopInput);
     const shopify = await createShopifyForShop(shop);
 
-    const path = `/admin/api/2024-01/orders/${encodeURIComponent(orderId)}.json?status=any`;
-    const json = await shopify.get(path);
+    const p = `/admin/api/2024-01/orders/${encodeURIComponent(orderId)}.json?status=any`;
+    const json = await shopify.get(p);
     if (!json?.order) {
       const err: any = new Error(`Order not found: ${orderId}`);
       err.status = 404;
