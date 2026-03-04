@@ -28,6 +28,17 @@ function buildMoneySet(node: any) {
   };
 }
 
+function normalizeListOrConnection(input: any): any[] {
+  // Accept either:
+  // - [ {..}, {..} ]
+  // - { edges: [ { node: {...} } ] }
+  if (!input) return [];
+  if (Array.isArray(input)) return input;
+  const edges = input?.edges;
+  if (Array.isArray(edges)) return edges.map((e: any) => e?.node).filter(Boolean);
+  return [];
+}
+
 function toRestLikeOrder(gql: any): any {
   const idNum = parseGidNumber(gql?.id);
 
@@ -38,9 +49,9 @@ function toRestLikeOrder(gql: any): any {
   const total_price = totalPriceSet?.shopMoney?.amount ?? "0";
   const current_total_price = currentTotalPriceSet?.shopMoney?.amount ?? total_price;
 
-  const lineEdges = (gql?.lineItems?.edges ?? []) as Array<{ node: any }>;
-  const line_items = lineEdges.map((e) => {
-    const n = e?.node ?? {};
+  // lineItems is a connection in Shopify GraphQL
+  const lineNodes = normalizeListOrConnection(gql?.lineItems);
+  const line_items = lineNodes.map((n: any) => {
     const variantId = parseGidNumber(n?.variant?.id);
     const productId = parseGidNumber(n?.variant?.product?.id);
 
@@ -53,15 +64,16 @@ function toRestLikeOrder(gql: any): any {
     };
   });
 
-  const refundEdges = (gql?.refunds?.edges ?? []) as Array<{ node: any }>;
-  const refunds = refundEdges.map((e) => {
-    const r = e?.node ?? {};
-    const txEdges = (r?.transactions?.edges ?? []) as Array<{ node: any }>;
-    const transactions = txEdges.map((te) => {
-      const t = te?.node ?? {};
+  // refunds is a LIST of Refund (no edges) in Shopify Admin GraphQL
+  const refundNodes = normalizeListOrConnection(gql?.refunds);
+  const refunds = refundNodes.map((r: any) => {
+    // transactions might be list or connection depending on API version/shape
+    const txNodes = normalizeListOrConnection(r?.transactions);
+    const transactions = txNodes.map((t: any) => {
       const amt = t?.amountSet?.shopMoney?.amount ?? "0";
       return { amount: String(amt) };
     });
+
     return { transactions };
   });
 
@@ -84,7 +96,7 @@ function toRestLikeOrder(gql: any): any {
     line_items,
     refunds,
 
-    // keep compatibility with shipping extractor fallback
+    // Keep compatibility with shipping extractor fallback
     shipping_lines: [],
   };
 }
@@ -121,17 +133,9 @@ query OrdersSince($first: Int!, $after: String, $query: String!) {
           }
         }
 
-        refunds(first: 50) {
-          edges {
-            node {
-              transactions(first: 50) {
-                edges {
-                  node {
-                    amountSet { shopMoney { amount currencyCode } }
-                  }
-                }
-              }
-            }
+        refunds {
+          transactions {
+            amountSet { shopMoney { amount currencyCode } }
           }
         }
       }
@@ -169,17 +173,9 @@ query OrderById($id: ID!) {
       }
     }
 
-    refunds(first: 50) {
-      edges {
-        node {
-          transactions(first: 50) {
-            edges {
-              node {
-                amountSet { shopMoney { amount currencyCode } }
-              }
-            }
-          }
-        }
+    refunds {
+      transactions {
+        amountSet { shopMoney { amount currencyCode } }
       }
     }
   }
@@ -205,7 +201,7 @@ export async function fetchOrdersGraphql(params: {
   shop: string;
   accessToken: string;
   days: number;
-  apiVersion?: string; // default 2024-01
+  apiVersion?: string;
 }): Promise<any[]> {
   const apiVersion = params.apiVersion ?? "2024-01";
   const shopify = createShopifyClient({ shopDomain: params.shop, accessToken: params.accessToken });
