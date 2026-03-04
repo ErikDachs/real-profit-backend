@@ -13,7 +13,6 @@ type PcdTopic = "app/uninstalled" | "shop/redact" | "customers/redact" | "custom
 
 const PCD_TOPICS: PcdTopic[] = [
   "app/uninstalled",
-  "shop/redact",
   "customers/redact",
   "customers/data_request",
 ];
