@@ -41,7 +41,9 @@ const fakeCtx: ShopifyCtx = {
   createShopifyForShop: async (_shopDomain: string) => {
     return { get: async (_path: string) => ({}) } as any;
   },
-
+  // ✅ NEW: per-shop getters required by ShopifyCtx
+  getCogsOverridesStoreForShop: async (_shopDomain: string) => fakeCtx.cogsOverridesStore,
+  getCogsServiceForShop: async (_shopDomain: string) => fakeCtx.cogsService,
   cogsOverridesStore: {
     ensureLoaded: async () => {},
     list: async () => [],

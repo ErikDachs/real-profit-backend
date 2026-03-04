@@ -1,6 +1,7 @@
 // src/storage/cogsOverridesStore.ts
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { isValidShopDomain, normalizeShopDomain } from "./shopsStore.js";
 
 export type CogsOverrideRecord = {
   variantId: number;
@@ -28,21 +29,40 @@ type FileShapeV2 = {
   >;
 };
 
+type StoreParams =
+  | { filePath?: string } // legacy/global mode
+  | { shop: string; dataDir?: string; filePath?: never }; // shop-scoped mode
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
 /**
- * MVP persistence for manual COGS overrides + ignore flag.
- * File: <projectRoot>/data/cogs-overrides.json
+ * ✅ SHOP-SCOPED persistence (PCD-safe):
+ * - File: <dataDir>/cogsOverrides.<shop>.json
  *
- * Later: replace with DB table:
- *  shop_id + variant_id + unit_cost + ignore_cogs + updated_at
+ * Backwards compatible:
+ * - If constructed with {filePath} or no params => legacy global file.
  */
 export class CogsOverridesStore {
   private filePath: string;
   private loaded = false;
   private overrides = new Map<number, CogsOverrideRecord>();
 
-  constructor(params?: { filePath?: string }) {
-    const defaultPath = path.join(process.cwd(), "data", "cogs-overrides.json");
-    this.filePath = params?.filePath ?? defaultPath;
+  constructor(params?: StoreParams) {
+    const defaultLegacyPath = path.join(process.cwd(), "data", "cogs-overrides.json");
+
+    if (params && "shop" in params) {
+      const shop = normalizeShopDomain(params.shop);
+      if (!isValidShopDomain(shop)) {
+        // fail-fast: we do NOT want to write arbitrary filenames
+        throw new Error(`Invalid shop domain for CogsOverridesStore: ${String(params.shop)}`);
+      }
+      const dir = params.dataDir ?? path.join(process.cwd(), "data");
+      this.filePath = path.join(dir, `cogsOverrides.${shop}.json`);
+    } else {
+      this.filePath = (params as any)?.filePath ?? defaultLegacyPath;
+    }
   }
 
   async ensureLoaded(): Promise<void> {
@@ -57,8 +77,9 @@ export class CogsOverridesStore {
         const v1 = json as FileShapeV1;
         for (const [k, v] of Object.entries(v1.overrides ?? {})) {
           const variantId = Number(k);
-          const unitCost = Number(v?.unitCost ?? NaN);
-          const updatedAt = String(v?.updatedAt ?? "");
+          const unitCost = Number((v as any)?.unitCost ?? NaN);
+          const updatedAt = String((v as any)?.updatedAt ?? "");
+
           if (!Number.isFinite(variantId) || variantId <= 0) continue;
           if (!Number.isFinite(unitCost) || unitCost < 0) continue;
 
@@ -66,13 +87,12 @@ export class CogsOverridesStore {
             variantId,
             unitCost,
             ignoreCogs: false,
-            updatedAt: updatedAt || new Date().toISOString(),
+            updatedAt: updatedAt || nowIso(),
           });
         }
 
         this.loaded = true;
-        // Persist migrated format once (best effort)
-        await this.persistToDisk();
+        await this.persistToDisk(); // best-effort migration
         return;
       }
 
@@ -81,11 +101,11 @@ export class CogsOverridesStore {
         const v2 = json as FileShapeV2;
         for (const [k, v] of Object.entries(v2.overrides ?? {})) {
           const variantId = Number(k);
+          if (!Number.isFinite(variantId) || variantId <= 0) continue;
+
           const unitCostRaw = (v as any)?.unitCost;
           const ignoreCogs = Boolean((v as any)?.ignoreCogs ?? false);
           const updatedAt = String((v as any)?.updatedAt ?? "");
-
-          if (!Number.isFinite(variantId) || variantId <= 0) continue;
 
           let unitCost: number | undefined = undefined;
           if (unitCostRaw !== undefined && unitCostRaw !== null && unitCostRaw !== "") {
@@ -97,7 +117,7 @@ export class CogsOverridesStore {
             variantId,
             unitCost,
             ignoreCogs,
-            updatedAt: updatedAt || new Date().toISOString(),
+            updatedAt: updatedAt || nowIso(),
           });
         }
 
@@ -108,7 +128,6 @@ export class CogsOverridesStore {
       // Unknown format -> treat as empty
       this.loaded = true;
     } catch {
-      // file missing -> fine
       this.loaded = true;
     }
   }
@@ -126,12 +145,6 @@ export class CogsOverridesStore {
     return Array.from(this.overrides.values()).sort((a, b) => a.variantId - b.variantId);
   }
 
-  /**
-   * Upsert unitCost and/or ignore flag.
-   * - Pass unitCost to set/overwrite
-   * - Pass ignoreCogs to set/overwrite
-   * - Omit a field to keep it unchanged
-   */
   async upsert(params: {
     variantId: number;
     unitCost?: number | null;
@@ -140,9 +153,7 @@ export class CogsOverridesStore {
     await this.ensureLoaded();
 
     const variantId = Number(params.variantId);
-    if (!Number.isFinite(variantId) || variantId <= 0) {
-      throw new Error("variantId must be a positive number");
-    }
+    if (!Number.isFinite(variantId) || variantId <= 0) throw new Error("variantId must be a positive number");
 
     const prev = this.overrides.get(variantId);
 
@@ -153,9 +164,7 @@ export class CogsOverridesStore {
         nextUnitCost = undefined; // allow clearing override
       } else {
         const unitCost = Number(params.unitCost);
-        if (!Number.isFinite(unitCost) || unitCost < 0) {
-          throw new Error("unitCost must be a number >= 0");
-        }
+        if (!Number.isFinite(unitCost) || unitCost < 0) throw new Error("unitCost must be a number >= 0");
         nextUnitCost = unitCost;
       }
     }
@@ -170,12 +179,27 @@ export class CogsOverridesStore {
       variantId,
       unitCost: nextUnitCost,
       ignoreCogs: nextIgnore,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
     };
 
     this.overrides.set(variantId, rec);
     await this.persistToDisk();
     return rec;
+  }
+
+  /**
+   * ✅ PCD: clear ALL overrides for this store file.
+   * Idempotent.
+   */
+  async clearAll(): Promise<void> {
+    await this.ensureLoaded();
+    this.overrides.clear();
+
+    try {
+      await fs.unlink(this.filePath);
+    } catch {
+      // ignore
+    }
   }
 
   private async persistToDisk(): Promise<void> {
@@ -184,7 +208,7 @@ export class CogsOverridesStore {
 
     const shape: FileShapeV2 = {
       version: 2,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
       overrides: {},
     };
 

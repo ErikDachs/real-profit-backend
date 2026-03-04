@@ -1,20 +1,18 @@
 // src/storage/actionPlanStateStore.ts
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isValidShopDomain, normalizeShopDomain } from "./shopsStore.js";
 
 export type ActionStatus = "OPEN" | "IN_PROGRESS" | "DONE" | "DISMISSED";
 
 export type ActionStateRecord = {
   actionId: string;
-
   status: ActionStatus;
 
   note?: string | null;
   dueDate?: string | null; // ISO date or ISO datetime
-
   dismissedReason?: string | null;
 
-  // audit
   updatedAt: string; // ISO
 };
 
@@ -25,9 +23,12 @@ type FileShapeV1 = {
   states: Record<string, ActionStateRecord>;
 };
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
 function isIsoLike(s: any): boolean {
   if (!s || typeof s !== "string") return false;
-  // permissive: "YYYY-MM-DD" or ISO string
   return /^\d{4}-\d{2}-\d{2}($|T)/.test(s);
 }
 
@@ -55,7 +56,13 @@ export class ActionPlanStateStore {
   private loaded = false;
   private file: FileShapeV1 | null = null;
 
-  constructor(private params: { shop: string; dataDir?: string }) {}
+  constructor(private params: { shop: string; dataDir?: string }) {
+    const shop = normalizeShopDomain(params.shop);
+    if (!isValidShopDomain(shop)) {
+      throw new Error(`Invalid shop domain for ActionPlanStateStore: ${String(params.shop)}`);
+    }
+    this.params.shop = shop;
+  }
 
   private filePath() {
     const dir = this.params.dataDir ?? path.join(process.cwd(), "data");
@@ -75,7 +82,7 @@ export class ActionPlanStateStore {
         return;
       }
 
-      const statesRaw = (parsed.states && typeof parsed.states === "object") ? parsed.states : {};
+      const statesRaw = parsed.states && typeof parsed.states === "object" ? parsed.states : {};
       const states: Record<string, ActionStateRecord> = {};
 
       for (const [actionId, rec] of Object.entries(statesRaw)) {
@@ -87,7 +94,7 @@ export class ActionPlanStateStore {
         const dismissedReason = clampReason(r?.dismissedReason);
 
         const dueDate = r?.dueDate && isIsoLike(r?.dueDate) ? String(r?.dueDate) : null;
-        const updatedAt = r?.updatedAt && isIsoLike(r?.updatedAt) ? String(r?.updatedAt) : new Date().toISOString();
+        const updatedAt = r?.updatedAt && isIsoLike(r?.updatedAt) ? String(r?.updatedAt) : nowIso();
 
         states[actionId] = {
           actionId,
@@ -102,7 +109,7 @@ export class ActionPlanStateStore {
       this.file = {
         version: 1,
         shop: String(parsed.shop ?? this.params.shop),
-        updatedAt: String(parsed.updatedAt ?? new Date().toISOString()),
+        updatedAt: String(parsed.updatedAt ?? nowIso()),
         states,
       };
     } catch {
@@ -141,24 +148,22 @@ export class ActionPlanStateStore {
 
     const prev = this.getStateSync(actionId);
 
-    const nextStatus = params.status === undefined || params.status === null ? (prev?.status ?? "OPEN") : normalizeStatus(params.status);
+    const nextStatus =
+      params.status === undefined || params.status === null ? prev?.status ?? "OPEN" : normalizeStatus(params.status);
 
-    const nextNote =
-      params.note === undefined ? (prev?.note ?? null) : clampNote(params.note);
+    const nextNote = params.note === undefined ? prev?.note ?? null : clampNote(params.note);
 
     const nextDue =
       params.dueDate === undefined
-        ? (prev?.dueDate ?? null)
-        : (params.dueDate && isIsoLike(params.dueDate) ? String(params.dueDate) : null);
+        ? prev?.dueDate ?? null
+        : params.dueDate && isIsoLike(params.dueDate)
+          ? String(params.dueDate)
+          : null;
 
     const nextDismissReason =
-      params.dismissedReason === undefined
-        ? (prev?.dismissedReason ?? null)
-        : clampReason(params.dismissedReason);
+      params.dismissedReason === undefined ? prev?.dismissedReason ?? null : clampReason(params.dismissedReason);
 
-    // If dismissed -> allow reason; else clear dismissedReason by default
-    const dismissedReason =
-      nextStatus === "DISMISSED" ? (nextDismissReason ?? null) : null;
+    const dismissedReason = nextStatus === "DISMISSED" ? nextDismissReason ?? null : null;
 
     const rec: ActionStateRecord = {
       actionId,
@@ -166,18 +171,20 @@ export class ActionPlanStateStore {
       note: nextNote ?? null,
       dueDate: nextDue ?? null,
       dismissedReason,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
     };
 
-    const file = this.file ?? {
-      version: 1,
-      shop: this.params.shop,
-      updatedAt: new Date().toISOString(),
-      states: {},
-    };
+    const file =
+      this.file ??
+      ({
+        version: 1,
+        shop: this.params.shop,
+        updatedAt: nowIso(),
+        states: {},
+      } as FileShapeV1);
 
     file.states[actionId] = rec;
-    file.updatedAt = new Date().toISOString();
+    file.updatedAt = nowIso();
     this.file = file;
 
     await this.persist();
@@ -191,20 +198,37 @@ export class ActionPlanStateStore {
 
     if (!this.file?.states?.[id]) return;
     delete this.file.states[id];
-    this.file.updatedAt = new Date().toISOString();
+    this.file.updatedAt = nowIso();
     await this.persist();
+  }
+
+  /**
+   * ✅ PCD: clear ALL action plan state for this shop.
+   * Idempotent.
+   */
+  async clearAll(): Promise<void> {
+    await this.ensureLoaded();
+    this.file = null;
+
+    try {
+      await fs.unlink(this.filePath());
+    } catch {
+      // ignore
+    }
   }
 
   private async persist(): Promise<void> {
     const fp = this.filePath();
     await fs.mkdir(path.dirname(fp), { recursive: true });
 
-    const payload: FileShapeV1 = this.file ?? {
-      version: 1,
-      shop: this.params.shop,
-      updatedAt: new Date().toISOString(),
-      states: {},
-    };
+    const payload: FileShapeV1 =
+      this.file ??
+      ({
+        version: 1,
+        shop: this.params.shop,
+        updatedAt: nowIso(),
+        states: {},
+      } as FileShapeV1);
 
     const tmp = `${fp}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(payload, null, 2), "utf-8");

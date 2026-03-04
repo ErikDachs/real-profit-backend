@@ -4,10 +4,16 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import env from "@fastify/env";
+
 import { registerShopifyRoutes } from "./routes/shopify.js";
 
 export async function buildApp() {
-  const app = Fastify({ logger: false });
+  // logger: in prod nicht blind sein. Keine PII loggen — aber errors brauchst du.
+const app = Fastify({
+  logger: {
+    level: process.env.NODE_ENV === "production" ? "info" : "debug",
+  },
+});
 
   await app.register(env, {
     dotenv: true,
@@ -18,7 +24,7 @@ export async function buildApp() {
         PORT: { type: "number", default: 3001 },
         NODE_ENV: { type: "string", default: "development" },
 
-        // ✅ NEW: central data dir for JSON stores (tests can override)
+        // ✅ central data dir for JSON stores (tests can override)
         DATA_DIR: { type: "string", default: "data" },
 
         // ✅ Variante C (OAuth app)
@@ -40,12 +46,26 @@ export async function buildApp() {
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(helmet);
-  await app.register(rateLimit, { max: 200, timeWindow: "1 minute" });
 
+  // Health should never be rate-limited hard
   app.get("/health", async () => {
     return { ok: true, service: "backend", ts: new Date().toISOString() };
   });
 
+  // ✅ Register Shopify routes FIRST (includes OAuth + Webhooks).
+  // We do NOT want rate-limit to block Shopify webhooks.
   await registerShopifyRoutes(app);
+
+  app.get("/__debug/routes", async () => {
+  // @ts-ignore
+  return app.printRoutes();
+});
+  // ✅ Rate-limit only the remaining “normal” API traffic if you add any non-shopify routes later.
+  // If right now *everything* is under /api/shopify, this stays harmless.
+  await app.register(async (scoped) => {
+    await scoped.register(rateLimit, { max: 200, timeWindow: "1 minute" });
+    // If you later add non-shopify routes, register them here.
+  });
+
   return app;
 }

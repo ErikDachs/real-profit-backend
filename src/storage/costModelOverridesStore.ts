@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { CostProfileOverrides } from "../domain/costModel/types.js";
+import { isValidShopDomain, normalizeShopDomain } from "./shopsStore.js";
 
 type Persisted = {
   shop: string;
@@ -13,7 +14,13 @@ export class CostModelOverridesStore {
   private loaded = false;
   private persisted: Persisted | null = null;
 
-  constructor(private params: { shop: string; dataDir?: string }) {}
+  constructor(private params: { shop: string; dataDir?: string }) {
+    const shop = normalizeShopDomain(params.shop);
+    if (!isValidShopDomain(shop)) {
+      throw new Error(`Invalid shop domain for CostModelOverridesStore: ${String(params.shop)}`);
+    }
+    this.params.shop = shop;
+  }
 
   private filePath() {
     const dir = this.params.dataDir ?? path.join(process.cwd(), "data");

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "shop": "profit-engine-test.myshopify.com",
+  "updatedAt": "2026-03-04T08:51:37.543Z",
+  "seen": {
+    "evt_smoke_1": "2026-03-04T07:26:58.559Z",
+    "evt_smoke_delete_test_2": "2026-03-04T08:51:37.543Z"
+  }
+}
