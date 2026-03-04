@@ -1,6 +1,7 @@
 // src/routes/shopify/ctx.ts
 import { FastifyInstance } from "fastify";
 import { createShopifyClient } from "../../integrations/shopify/client.js";
+import { fetchOrdersGraphql, fetchOrderByIdGraphql } from "../../integrations/shopify/ordersGraphql.js";
 
 import { CogsService } from "../../domain/cogs.js";
 import { CogsOverridesStore } from "../../storage/cogsOverridesStore.js";
@@ -49,51 +50,8 @@ export type ShopifyCtx = {
   actionPlanStateStore: ActionPlanStateStore;
 };
 
-// ---- Phase 1: Data minimization + defense-in-depth ----
-const ORDER_FIELDS = [
-  "id",
-  "name",
-  "created_at",
-  "currency",
-  "financial_status",
-  "fulfillment_status",
-
-  "total_price",
-  "subtotal_price",
-  "total_discounts",
-  "total_tax",
-  "total_shipping_price_set",
-
-  "current_total_price",
-  "current_subtotal_price",
-  "current_total_discounts",
-  "current_total_tax",
-
-  "line_items",
-  "shipping_lines",
-  "refunds",
-
-  "processed_at",
-] as const;
-
-function buildOrdersListPath(params: { apiVersion: string; sinceIso: string }) {
-  const { apiVersion, sinceIso } = params;
-  const fields = encodeURIComponent(ORDER_FIELDS.join(","));
-  return (
-    `/admin/api/${apiVersion}/orders.json` +
-    `?status=any&limit=250` +
-    `&created_at_min=${encodeURIComponent(sinceIso)}` +
-    `&fields=${fields}`
-  );
-}
-
-function buildOrderByIdPath(params: { apiVersion: string; orderId: string }) {
-  const { apiVersion, orderId } = params;
-  const fields = encodeURIComponent(ORDER_FIELDS.join(","));
-  return `/admin/api/${apiVersion}/orders/${encodeURIComponent(orderId)}.json?status=any&fields=${fields}`;
-}
-
 function redactOrderPII(order: any): any {
+  // Defense-in-depth. GraphQL fetch omits customer fields, but keep this anyway.
   if (!order || typeof order !== "object") return order;
 
   const clone: any = { ...order };
@@ -126,7 +84,7 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
   const shopsStore = new ShopsStore({ dataDir: app.config.DATA_DIR });
   await shopsStore.ensureLoaded();
 
-  const apiVersion = "2024-01";
+ const apiVersion = String((app.config as any).SHOPIFY_API_VERSION || "2024-01");
 
   // -----------------------------
   // ✅ Multi-shop COGS isolation
@@ -172,13 +130,15 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     const shop = normalizeShopDomain(shopInput);
     if (!isValidShopDomain(shop)) throw Object.assign(new Error("Invalid shop domain"), { status: 400 });
 
-    const shopify = await createShopifyForShop(shop);
+    const token = await shopsStore.getAccessTokenOrThrow(shop);
 
-    const since = new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000).toISOString();
-    const ordersPath = buildOrdersListPath({ apiVersion, sinceIso: since });
+    const orders = await fetchOrdersGraphql({
+      shop,
+      accessToken: token,
+      days,
+      apiVersion,
+    });
 
-    const json = await shopify.get(ordersPath);
-    const orders = (json.orders ?? []) as any[];
     return orders.map(redactOrderPII);
   }
 
@@ -186,18 +146,22 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     const shop = normalizeShopDomain(shopInput);
     if (!isValidShopDomain(shop)) throw Object.assign(new Error("Invalid shop domain"), { status: 400 });
 
-    const shopify = await createShopifyForShop(shop);
+    const token = await shopsStore.getAccessTokenOrThrow(shop);
 
-    const p = buildOrderByIdPath({ apiVersion, orderId });
-    const json = await shopify.get(p);
+    const order = await fetchOrderByIdGraphql({
+      shop,
+      accessToken: token,
+      orderId,
+      apiVersion,
+    });
 
-    if (!json?.order) {
+    if (!order) {
       const err: any = new Error(`Order not found: ${orderId}`);
       err.status = 404;
       throw err;
     }
 
-    return redactOrderPII(json.order as any);
+    return redactOrderPII(order);
   }
 
   // Legacy single-shop client
@@ -231,7 +195,9 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
 
   async function fetchOrders(days: number) {
     if (!legacyShop) {
-      const err: any = new Error("SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store.");
+      const err: any = new Error(
+        "SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store."
+      );
       err.status = 400;
       throw err;
     }
@@ -240,7 +206,9 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
 
   async function fetchOrderById(orderId: string) {
     if (!legacyShop) {
-      const err: any = new Error("SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store.");
+      const err: any = new Error(
+        "SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store."
+      );
       err.status = 400;
       throw err;
     }

@@ -4,6 +4,13 @@ import fetch from "node-fetch";
 export type ShopifyClient = {
   get: (path: string) => Promise<any>;
   post: (path: string, body: any) => Promise<any>;
+
+  /**
+   * GraphQL helper (Admin API)
+   * - path should be: /admin/api/{version}/graphql.json
+   * - returns data (throws if GraphQL errors present)
+   */
+  graphql: <T = any>(path: string, query: string, variables?: Record<string, any>) => Promise<T>;
 };
 
 type ShopifyApiError = Error & {
@@ -13,15 +20,20 @@ type ShopifyApiError = Error & {
 };
 
 function safeSnippet(text: string, maxLen = 200): string {
-  // Keep only a short snippet; strip newlines to avoid log spam.
   const s = String(text || "").replace(/\s+/g, " ").trim();
   return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
 }
 
-async function parseJsonOrNull(res: any): Promise<any | null> {
-  // Shopify usually returns JSON, but errors may be HTML/plaintext.
+async function readTextSafe(res: any): Promise<string> {
   try {
-    const text = await res.text();
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+
+async function parseJsonOrNullFromText(text: string): Promise<any | null> {
+  try {
     if (!text) return null;
     return JSON.parse(text);
   } catch {
@@ -47,17 +59,12 @@ export function createShopifyClient(params: {
       body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
 
+    const text = await readTextSafe(res);
+
     if (!res.ok) {
       // Phase 1/PCD: never throw full response bodies (can contain PII).
       const requestId = res.headers.get("x-request-id") || undefined;
-
-      let bodySnippet: string | undefined;
-      try {
-        const text = await res.text();
-        bodySnippet = safeSnippet(text);
-      } catch {
-        bodySnippet = undefined;
-      }
+      const bodySnippet = text ? safeSnippet(text) : undefined;
 
       const msgParts = [
         `Shopify API error ${res.status}`,
@@ -72,9 +79,26 @@ export function createShopifyClient(params: {
       throw err;
     }
 
-    // Prefer JSON, but stay resilient.
-    const json = await parseJsonOrNull(res);
+    const json = await parseJsonOrNullFromText(text);
     return json ?? {};
+  }
+
+  async function graphql<T = any>(path: string, query: string, variables?: Record<string, any>): Promise<T> {
+    const payload = { query, variables: variables ?? {} };
+
+    const json = await request("POST", path, payload);
+
+    // Shopify GraphQL can return { data, errors }
+    if (json?.errors && Array.isArray(json.errors) && json.errors.length > 0) {
+      // Keep error payload small (no PII expected here, but stay safe)
+      const snippet = safeSnippet(JSON.stringify(json.errors));
+      const err = new Error(`Shopify GraphQL error | errors=${snippet}`) as ShopifyApiError;
+      err.status = 502;
+      err.url = `https://${shopDomain}${path}`;
+      throw err;
+    }
+
+    return (json?.data ?? {}) as T;
   }
 
   return {
@@ -84,5 +108,6 @@ export function createShopifyClient(params: {
     post(path: string, body: any) {
       return request("POST", path, body);
     },
+    graphql,
   };
 }
