@@ -13,6 +13,7 @@ import {
   verifyShopifyQueryHmac,
   ShopifyOAuthError,
 } from "../../integrations/shopify/oauth.js";
+import { registerPcdWebhooks } from "../../integrations/shopify/webhooks.js";
 
 type OAuthInstallQuery = {
   shop?: string;
@@ -52,6 +53,9 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
   const appUrl = String(app.config.APP_URL || "").trim();
 
   const redirectUri = `${appUrl.replace(/\/$/, "")}/api/shopify/oauth/callback`;
+
+  // Keep API version deterministic & aligned with your ctx.ts usage.
+  const apiVersion = "2024-01";
 
   app.get<{ Querystring: OAuthInstallQuery }>("/api/shopify/oauth/install", async (req, reply) => {
     try {
@@ -112,11 +116,25 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
       const tok = await exchangeCodeForAccessToken({ shop, apiKey, apiSecret, code });
       await shopsStore.upsertToken({ shop, accessToken: tok.access_token, scope: tok.scope ?? null });
 
+      // ✅ Register required PCD webhooks right after install.
+      // Hard-fail if this does not work -> otherwise you "think" you're compliant, but Shopify sends nothing.
+      const reg = await registerPcdWebhooks({
+        shop,
+        accessToken: tok.access_token,
+        apiVersion,
+        appUrl,
+      });
+
       reply.header("Cache-Control", "no-store");
       return {
         ok: true,
         shop,
         scope: tok.scope ?? null,
+        webhooks: {
+          address: reg.address,
+          created: reg.created,
+          alreadyPresent: reg.alreadyPresent,
+        },
         next: `/api/orders/profit?shop=${encodeURIComponent(shop)}&days=30`,
       };
     } catch (e: any) {
