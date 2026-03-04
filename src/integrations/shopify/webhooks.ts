@@ -2,27 +2,32 @@
 import { createShopifyClient } from "./client.js";
 import { isValidShopDomain, normalizeShopDomain } from "../../storage/shopsStore.js";
 
-export type RegisterPcdWebhooksParams = {
+export type RegisterWebhooksAfterInstallParams = {
   shop: string;
   accessToken: string;
   apiVersion: string; // e.g. "2024-01"
   appUrl: string; // e.g. "https://real-profit-backend.onrender.com"
 };
 
-type PcdTopic = "app/uninstalled" | "shop/redact" | "customers/redact" | "customers/data_request";
+/**
+ * Ruthless reality:
+ * - Shopify REST /webhooks.json does NOT reliably allow subscribing to GDPR/PCD compliance topics
+ *   like customers/redact, customers/data_request, shop/redact in all contexts.
+ * - Your endpoint must handle them (you already do), but registration may be done via
+ *   Shopify Partner Dashboard / app configuration / compliance setup.
+ *
+ * What we DO register via REST after install:
+ * - app/uninstalled  (reliably supported)
+ */
+type AutoTopic = "app/uninstalled";
 
-const PCD_TOPICS: PcdTopic[] = [
-  "app/uninstalled",
-  "customers/redact",
-  "customers/data_request",
-];
+const AUTO_TOPICS: AutoTopic[] = ["app/uninstalled"];
 
 function stripTrailingSlash(s: string) {
   return String(s || "").replace(/\/$/, "");
 }
 
 function buildWebhookAddress(appUrl: string) {
-  // Must match your route exactly.
   return `${stripTrailingSlash(appUrl)}/api/shopify/webhooks`;
 }
 
@@ -35,8 +40,6 @@ function coerceArray(x: any): any[] {
 }
 
 function normalizeAddress(address: string): string {
-  // Shopify stores the address as given, but normalize obvious slash variants.
-  // We avoid over-normalizing (query strings etc.).
   return stripTrailingSlash(String(address || "").trim());
 }
 
@@ -47,20 +50,21 @@ function normalizeTopic(topic: string): string {
 function looksLikeAlreadyExistsError(e: any): boolean {
   const status = Number(e?.status);
   const msg = String(e?.message || "").toLowerCase();
-
   // Shopify can respond with 422 for duplicates.
-  // We treat duplicates as success for idempotency.
   if (status === 422) return true;
   if (msg.includes("already been taken")) return true;
   if (msg.includes("has already been taken")) return true;
   return false;
 }
 
-export async function registerPcdWebhooks(params: RegisterPcdWebhooksParams): Promise<{
+export async function registerWebhooksAfterInstall(
+  params: RegisterWebhooksAfterInstallParams
+): Promise<{
   ok: true;
   address: string;
-  created: PcdTopic[];
-  alreadyPresent: PcdTopic[];
+  created: AutoTopic[];
+  alreadyPresent: AutoTopic[];
+  skippedComplianceTopics: Array<"customers/data_request" | "customers/redact" | "shop/redact">;
 }> {
   const shop = normalizeShopDomain(params.shop);
   if (!isValidShopDomain(shop)) {
@@ -85,7 +89,6 @@ export async function registerPcdWebhooks(params: RegisterPcdWebhooksParams): Pr
 
   const address = buildWebhookAddress(params.appUrl);
   if (!/^https:\/\//i.test(address)) {
-    // Ruthless guardrail: never register non-https webhook addresses.
     const err: any = new Error("APP_URL must be https in production");
     err.status = 400;
     throw err;
@@ -93,8 +96,7 @@ export async function registerPcdWebhooks(params: RegisterPcdWebhooksParams): Pr
 
   const shopify = createShopifyClient({ shopDomain: shop, accessToken });
 
-  // 1) Fetch existing webhooks (idempotency without relying on error text).
-  // Shopify REST: GET /admin/api/{version}/webhooks.json
+  // Fetch existing (idempotent)
   const existingRes = await shopify.get(`/admin/api/${apiVersion}/webhooks.json?limit=250`);
   const existing = coerceArray(existingRes?.webhooks);
 
@@ -105,11 +107,10 @@ export async function registerPcdWebhooks(params: RegisterPcdWebhooksParams): Pr
     if (t && a) existingKeys.add(stableKey(t, a));
   }
 
-  const created: PcdTopic[] = [];
-  const alreadyPresent: PcdTopic[] = [];
+  const created: AutoTopic[] = [];
+  const alreadyPresent: AutoTopic[] = [];
 
-  // 2) Create missing ones (duplicate-tolerant anyway).
-  for (const topic of PCD_TOPICS) {
+  for (const topic of AUTO_TOPICS) {
     const key = stableKey(topic, normalizeAddress(address));
 
     if (existingKeys.has(key)) {
@@ -119,25 +120,25 @@ export async function registerPcdWebhooks(params: RegisterPcdWebhooksParams): Pr
 
     try {
       await shopify.post(`/admin/api/${apiVersion}/webhooks.json`, {
-        webhook: {
-          topic,
-          address,
-          format: "json",
-        },
+        webhook: { topic, address, format: "json" },
       });
       created.push(topic);
       existingKeys.add(key);
     } catch (e: any) {
       if (looksLikeAlreadyExistsError(e)) {
-        // Treat as success for idempotency.
         alreadyPresent.push(topic);
         existingKeys.add(key);
         continue;
       }
-      // Hard fail: if webhook registration fails, you are NOT compliant-by-default.
       throw e;
     }
   }
 
-  return { ok: true, address, created, alreadyPresent };
+  return {
+    ok: true,
+    address,
+    created,
+    alreadyPresent,
+    skippedComplianceTopics: ["customers/data_request", "customers/redact", "shop/redact"],
+  };
 }
