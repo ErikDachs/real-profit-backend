@@ -31,11 +31,17 @@ function buildMoneySet(node: any) {
 function normalizeListOrConnection(input: any): any[] {
   // Accept either:
   // - [ {..}, {..} ]
+  // - { nodes: [ {...}, {...} ] }
   // - { edges: [ { node: {...} } ] }
   if (!input) return [];
   if (Array.isArray(input)) return input;
+
+  const nodes = input?.nodes;
+  if (Array.isArray(nodes)) return nodes.filter(Boolean);
+
   const edges = input?.edges;
   if (Array.isArray(edges)) return edges.map((e: any) => e?.node).filter(Boolean);
+
   return [];
 }
 
@@ -64,15 +70,30 @@ function toRestLikeOrder(gql: any): any {
     };
   });
 
-  // refunds is a LIST of Refund (no edges) in Shopify Admin GraphQL
+  // refunds: Shopify can surface as list or connection depending on context/version.
+  // We'll accept both.
   const refundNodes = normalizeListOrConnection(gql?.refunds);
+
   const refunds = refundNodes.map((r: any) => {
-    // transactions might be list or connection depending on API version/shape
+    // Refund.transactions is documented as OrderTransactionConnection (connection),
+    // but we support list/connection defensively anyway.
     const txNodes = normalizeListOrConnection(r?.transactions);
-    const transactions = txNodes.map((t: any) => {
+
+    let transactions = txNodes.map((t: any) => {
+      // OrderTransaction.amountSet exists on the node; use shopMoney amount for deterministic accounting.
       const amt = t?.amountSet?.shopMoney?.amount ?? "0";
       return { amount: String(amt) };
     });
+
+    // Defensive fallback:
+    // If transactions are missing/empty but refund has a totalRefundedSet, synthesize one tx.
+    // This keeps your Domain extractor working and avoids silent 0-refund bugs.
+    if (transactions.length === 0) {
+      const totalRefundedAmt = r?.totalRefundedSet?.shopMoney?.amount;
+      if (totalRefundedAmt !== null && totalRefundedAmt !== undefined) {
+        transactions = [{ amount: String(totalRefundedAmt) }];
+      }
+    }
 
     return { transactions };
   });
@@ -134,8 +155,15 @@ query OrdersSince($first: Int!, $after: String, $query: String!) {
         }
 
         refunds {
-          transactions {
-            amountSet { shopMoney { amount currencyCode } }
+          totalRefundedSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+          transactions(first: 50) {
+            nodes {
+              amountSet {
+                shopMoney { amount currencyCode }
+                presentmentMoney { amount currencyCode }
+              }
+              status
+            }
           }
         }
       }
@@ -174,8 +202,15 @@ query OrderById($id: ID!) {
     }
 
     refunds {
-      transactions {
-        amountSet { shopMoney { amount currencyCode } }
+      totalRefundedSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+      transactions(first: 50) {
+        nodes {
+          amountSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          status
+        }
       }
     }
   }
@@ -183,18 +218,19 @@ query OrderById($id: ID!) {
 `;
 
 function ordersQueryString(params: { sinceIso: string }) {
+  // Keep it simple & PII-free
   return `status:any created_at:>=${params.sinceIso}`;
 }
 
 type OrdersQueryData = {
-  orders: {
-    pageInfo: { hasNextPage: boolean; endCursor: string | null };
-    edges: Array<{ node: any }>;
+  orders?: {
+    pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+    edges?: Array<{ node: any }>;
   };
 };
 
 type OrderByIdData = {
-  order: any | null;
+  order?: any | null;
 };
 
 export async function fetchOrdersGraphql(params: {
