@@ -17,6 +17,7 @@ type ShopifyApiError = Error & {
   status?: number;
   shopifyRequestId?: string;
   url?: string;
+  code?: string;
 };
 
 function safeSnippet(text: string, maxLen = 200): string {
@@ -41,10 +42,21 @@ async function parseJsonOrNullFromText(text: string): Promise<any | null> {
   }
 }
 
-export function createShopifyClient(params: {
-  shopDomain: string;
-  accessToken: string;
-}): ShopifyClient {
+function detectPcdBlockFromGraphQLErrors(errors: any[]): boolean {
+  // Shopify PCD block message patterns
+  // Example:
+  // "This app is not approved to access the Order object. See https://shopify.dev/docs/apps/launch/protected-customer-data ..."
+  for (const e of errors) {
+    const msg = String(e?.message ?? "");
+    if (!msg) continue;
+
+    if (msg.includes("not approved") && msg.toLowerCase().includes("protected customer data")) return true;
+    if (msg.includes("not approved to access the Order object")) return true;
+  }
+  return false;
+}
+
+export function createShopifyClient(params: { shopDomain: string; accessToken: string }): ShopifyClient {
   const { shopDomain, accessToken } = params;
 
   async function request(method: "GET" | "POST", path: string, body?: any) {
@@ -90,10 +102,14 @@ export function createShopifyClient(params: {
 
     // Shopify GraphQL can return { data, errors }
     if (json?.errors && Array.isArray(json.errors) && json.errors.length > 0) {
-      // Keep error payload small (no PII expected here, but stay safe)
+      const isPcd = detectPcdBlockFromGraphQLErrors(json.errors);
+
       const snippet = safeSnippet(JSON.stringify(json.errors));
       const err = new Error(`Shopify GraphQL error | errors=${snippet}`) as ShopifyApiError;
-      err.status = 502;
+
+      // If PCD blocked -> surface as 403 so routes don't lie with 500
+      err.status = isPcd ? 403 : 502;
+      err.code = isPcd ? "SHOPIFY_PCD_NOT_APPROVED" : "SHOPIFY_GRAPHQL_ERROR";
       err.url = `https://${shopDomain}${path}`;
       throw err;
     }

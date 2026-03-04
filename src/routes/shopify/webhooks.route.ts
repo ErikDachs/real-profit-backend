@@ -15,6 +15,7 @@ type VerifyParams = {
   secret: string;
 };
 
+// Normalize topics to lowercase
 const ALLOWED_TOPICS = new Set([
   "app/uninstalled",
   "shop/redact",
@@ -78,7 +79,6 @@ async function readStreamToBuffer(payload: any, limitBytes: number): Promise<Buf
   const chunks: Buffer[] = [];
   let total = 0;
 
-  // payload is a stream
   for await (const chunk of payload) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buf.length;
@@ -93,119 +93,137 @@ async function readStreamToBuffer(payload: any, limitBytes: number): Promise<Buf
   return Buffer.concat(chunks);
 }
 
+async function handleWebhook(instance: FastifyInstance, req: any, reply: any) {
+  const rawBody: Buffer = req.rawBody ?? Buffer.from("");
+
+  const hmacHeader = getHeader(req, "x-shopify-hmac-sha256");
+  const topicRaw = getHeader(req, "x-shopify-topic");
+  const shopHeader = getHeader(req, "x-shopify-shop-domain");
+  const eventId = getHeader(req, "x-shopify-event-id");
+
+  // Missing required auth inputs => 401
+  if (!hmacHeader || !topicRaw || !shopHeader) {
+    return reply.status(401).send();
+  }
+
+  const topic = String(topicRaw).trim().toLowerCase();
+
+  // Allowlist: unknown topics => 200 No-Op
+  if (!ALLOWED_TOPICS.has(topic)) {
+    instance.log.info(
+      { evt: "shopify_webhook_noop", topic, shop: redactShopDomain(shopHeader) },
+      "Webhook noop (unsupported topic)"
+    );
+    return reply.status(200).send();
+  }
+
+  const ok = verifyWebhookHmac({
+    rawBody,
+    hmacHeader,
+    secret: process.env.SHOPIFY_API_SECRET || "",
+  });
+
+  instance.log.info(
+    {
+      evt: "shopify_webhook",
+      ok,
+      topic,
+      shop: redactShopDomain(shopHeader),
+      eventId: shortEventId(eventId),
+      rawLen: rawBody.length,
+    },
+    "Webhook received"
+  );
+
+  if (!ok) return reply.status(401).send();
+
+  const shop = normalizeShopDomain(shopHeader);
+  if (!isValidShopDomain(shop)) {
+    instance.log.warn({ evt: "shopify_webhook_invalid_shop", topic }, "Invalid shop domain in webhook");
+    return reply.status(200).send();
+  }
+
+  const dataDir = dataDirFromEnv();
+
+  // Optional dedupe
+  if (eventId) {
+    try {
+      const dedupe = new WebhookDedupeStore({ shop, dataDir });
+      const seen = await dedupe.has(eventId);
+      if (seen) return reply.status(200).send();
+      await dedupe.put(eventId, 30);
+    } catch {
+      // ignore, rely on idempotence
+    }
+  }
+
+  try {
+    switch (topic) {
+      case "app/uninstalled":
+      case "shop/redact": {
+        const shopsStore = new ShopsStore({ dataDir });
+        await shopsStore.clearToken({ shop, reason: "UNINSTALLED" });
+
+        const costModel = new CostModelOverridesStore({ shop, dataDir });
+        await costModel.clear();
+
+        const cogs = new CogsOverridesStore({ shop, dataDir });
+        await cogs.clearAll();
+
+        const action = new ActionPlanStateStore({ shop, dataDir });
+        await action.clearAll();
+
+        break;
+      }
+
+      case "customers/data_request":
+      case "customers/redact": {
+        // ack-only (no customer PII persisted)
+        break;
+      }
+    }
+
+    return reply.status(200).send();
+  } catch (e) {
+    instance.log.warn(
+      { evt: "shopify_webhook_failed", topic, shop: redactShopDomain(shop) },
+      "Webhook processing failed"
+    );
+    return reply.status(500).send();
+  }
+}
+
 export const shopifyWebhooksRoute: FastifyPluginAsync = async (instance: FastifyInstance) => {
+  // One canonical endpoint (your current approach)
   instance.post(
     "/api/shopify/webhooks",
     {
-      // ✅ Route-scoped raw-body capture WITHOUT global parser overrides.
       preParsing: async (req, _reply, payload) => {
         const raw = await readStreamToBuffer(payload, MAX_WEBHOOK_BODY_BYTES);
         (req as any).rawBody = raw;
-
-        // ✅ IMPORTANT: return a fresh stream so Fastify/Inject doesn't hang.
-        // Even if we never use req.body, Fastify expects a readable payload pipeline.
         return Readable.from(raw);
       },
     },
-    async (req, reply) => {
-      const rawBody: Buffer = (req as any).rawBody ?? Buffer.from("");
-
-      const hmacHeader = getHeader(req, "x-shopify-hmac-sha256");
-      const topic = getHeader(req, "x-shopify-topic");
-      const shopHeader = getHeader(req, "x-shopify-shop-domain");
-      const eventId = getHeader(req, "x-shopify-event-id");
-
-      // Missing required auth inputs => 401
-      if (!hmacHeader || !topic || !shopHeader) {
-        return reply.status(401).send();
-      }
-
-      // Allowlist: unknown topics => 200 No-Op
-      if (!ALLOWED_TOPICS.has(topic)) {
-        instance.log.info(
-          { evt: "shopify_webhook_noop", topic, shop: redactShopDomain(shopHeader) },
-          "Webhook noop (unsupported topic)"
-        );
-        return reply.status(200).send();
-      }
-instance.log.warn({ evt: "debug_secret_len", len: (process.env.SHOPIFY_API_SECRET || "").length }, "dbg");
-      const ok = verifyWebhookHmac({
-        rawBody,
-        hmacHeader,
-        secret: process.env.SHOPIFY_API_SECRET || "",
-      });
-
-      instance.log.info(
-        {
-          evt: "shopify_webhook",
-          ok,
-          topic,
-          shop: redactShopDomain(shopHeader),
-          eventId: shortEventId(eventId),
-          rawLen: rawBody.length,
-        },
-        "Webhook received"
-      );
-
-      if (!ok) return reply.status(401).send();
-
-      const shop = normalizeShopDomain(shopHeader);
-      if (!isValidShopDomain(shop)) {
-        instance.log.warn({ evt: "shopify_webhook_invalid_shop", topic }, "Invalid shop domain in webhook");
-        return reply.status(200).send();
-      }
-
-      const dataDir = dataDirFromEnv();
-
-      instance.log.warn({ evt: "dbg_datadir", dataDir: dataDir ?? "(cwd)/data", cwd: process.cwd() }, "dbg");
-      // Optional dedupe
-      if (eventId) {
-        try {
-          const dedupe = new WebhookDedupeStore({ shop, dataDir });
-          const seen = await dedupe.has(eventId);
-          if (seen) return reply.status(200).send();
-          await dedupe.put(eventId, 30);
-        } catch {
-          // ignore, rely on idempotence
-        }
-      }
-
-      try {
-        switch (topic) {
-          case "app/uninstalled":
-          case "shop/redact": {
-            const shopsStore = new ShopsStore({ dataDir });
-            await shopsStore.clearToken({ shop, reason: "UNINSTALLED" });
-
-            const costModel = new CostModelOverridesStore({ shop, dataDir });
-            await costModel.clear();
-
-            const cogs = new CogsOverridesStore({ shop, dataDir });
-            await cogs.clearAll();
-
-            const action = new ActionPlanStateStore({ shop, dataDir });
-            await action.clearAll();
-
-            break;
-          }
-
-          case "customers/data_request":
-          case "customers/redact": {
-            // ack-only (no customer PII persisted)
-            break;
-          }
-        }
-
-        return reply.status(200).send();
-      } catch (e) {
-        instance.log.warn(
-          { evt: "shopify_webhook_failed", topic, shop: redactShopDomain(shop) },
-          "Webhook processing failed"
-        );
-        return reply.status(500).send();
-      }
-    }
+    async (req, reply) => handleWebhook(instance, req as any, reply)
   );
+
+  // OPTIONAL: legacy/alternate paths to satisfy stubborn compliance checkers
+  // You can point Shopify to these explicitly if needed, or just keep them as safety net.
+  const legacyPaths = ["/shop/redact", "/customers/redact", "/customers/data_request", "/app/uninstalled"];
+
+  for (const p of legacyPaths) {
+    instance.post(
+      p,
+      {
+        preParsing: async (req, _reply, payload) => {
+          const raw = await readStreamToBuffer(payload, MAX_WEBHOOK_BODY_BYTES);
+          (req as any).rawBody = raw;
+          return Readable.from(raw);
+        },
+      },
+      async (req, reply) => handleWebhook(instance, req as any, reply)
+    );
+  }
 };
 
 export async function registerShopifyWebhooksRoutes(app: FastifyInstance) {
