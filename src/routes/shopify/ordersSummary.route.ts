@@ -16,28 +16,48 @@ export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx
       const daysNum = parseDays(q, 30);
       const adSpendNum = round2(Number(q?.adSpend ?? 0) || 0);
 
-      // ✅ persisted overrides + request overrides (request wins) — SSOT helper
+      // ✅ Determine shop context
+      const shopFromQuery = String(q?.shop ?? "").trim().toLowerCase();
+      const shop = shopFromQuery || ctx.shop;
+
+      // ✅ Select correct Shopify client + order fetcher
+      const shopifyClient = shopFromQuery
+        ? await ctx.createShopifyForShop(shopFromQuery)
+        : ctx.shopify;
+
+      const orders = shopFromQuery
+        ? await ctx.fetchOrdersForShop(shopFromQuery, daysNum)
+        : await ctx.fetchOrders(daysNum);
+
+      // ✅ Select correct shop-scoped COGS services/stores
+      const cogsOverridesStore = shopFromQuery
+        ? await ctx.getCogsOverridesStoreForShop(shopFromQuery)
+        : ctx.cogsOverridesStore;
+
+      const cogsService = shopFromQuery
+        ? await ctx.getCogsServiceForShop(shopFromQuery)
+        : ctx.cogsService;
+
+      // ✅ persisted overrides + request overrides (request wins)
       await ctx.costModelOverridesStore.ensureLoaded();
       const persisted = ctx.costModelOverridesStore.getOverridesSync();
       const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
 
-      // ✅ Resolve cost profile per request (config + merged overrides)
+      // ✅ Resolve cost profile per request
       const costProfile = resolveCostProfile({
         config: (app as any).config ?? {},
         overrides: mergedOverrides,
       });
 
-      const orders = await ctx.fetchOrders(daysNum);
-
       const summary = await buildOrdersSummary({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         adSpend: adSpendNum,
         orders,
         costProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
-        isIgnoredVariant: (variantId: number) => ctx.cogsOverridesStore.isIgnoredSync(variantId),
+        cogsService,
+        shopifyGET: shopifyClient.get,
+        isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
       });
 
       const health = computeProfitHealthFromSummary({
@@ -58,7 +78,6 @@ export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx
 
         missingCogsCount: summary.missingCogsCount,
 
-        // ✅ FIXED COSTS signal (was missing)
         fixedCostsAllocatedInPeriod: summary.fixedCostsAllocatedInPeriod,
       });
 
@@ -72,7 +91,10 @@ export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx
       });
     } catch (err: any) {
       const status = err?.status && Number.isFinite(err.status) ? err.status : 500;
-      return reply.status(status).send({ error: "Unexpected error", details: String(err?.message ?? err) });
+      return reply.status(status).send({
+        error: "Unexpected error",
+        details: String(err?.message ?? err),
+      });
     }
   });
 }
