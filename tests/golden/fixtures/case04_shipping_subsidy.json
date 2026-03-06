@@ -23,6 +23,7 @@
   },
   "expected": {
     "ordersSummary": {
+      "shippingImpact": -6.0,
       "orders": 1,
       "grossSales": 80.0,
       "refunds": 0.0,

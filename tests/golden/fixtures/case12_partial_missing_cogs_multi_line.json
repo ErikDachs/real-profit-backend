@@ -1,0 +1,29 @@
+{
+  "name": "case12_partial_missing_cogs_multi_line",
+  "costConfig": {
+    "feePercent": 0.02,
+    "feeFixed": 0.3,
+    "shipping": { "costPerOrder": 6.0 },
+    "flags": { "includeShippingCost": true },
+    "ads": { "periodTotal": 0.0 }
+  },
+  "orders": [
+    {
+      "id": "12001",
+      "name": "#12001",
+      "createdAt": "2026-03-02T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [
+        { "variantId": 1201, "qty": 1, "unitPrice": 50.0 },
+        { "variantId": 1202, "qty": 2, "unitPrice": 30.0 },
+        { "variantId": 1203, "qty": 1, "unitPrice": 20.0 }
+      ],
+      "shippingRevenue": 0.0,
+      "refunds": 0.0
+    }
+  ],
+  "cogs": {
+    "1201": 20.0,
+    "1203": 5.0
+  }
+}

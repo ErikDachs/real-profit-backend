@@ -1,0 +1,26 @@
+{
+  "name": "case10_over_refund_negative_net",
+  "costConfig": {
+    "feePercent": 0.02,
+    "feeFixed": 0.3,
+    "shipping": { "costPerOrder": 4.0 },
+    "flags": { "includeShippingCost": true },
+    "ads": { "periodTotal": 0.0 }
+  },
+  "orders": [
+    {
+      "id": "10001",
+      "name": "#10001",
+      "createdAt": "2026-02-28T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [
+        { "variantId": 1001, "qty": 1, "unitPrice": 100.0 }
+      ],
+      "shippingRevenue": 0.0,
+      "refundTransactions": [70.0, 50.0]
+    }
+  ],
+  "cogs": {
+    "1001": 40.0
+  }
+}

@@ -1,42 +1,105 @@
 import { createShopifyClient } from "../../integrations/shopify/client.js";
+import { fetchOrdersGraphql, fetchOrderByIdGraphql } from "../../integrations/shopify/ordersGraphql.js";
 import { CogsService } from "../../domain/cogs.js";
 import { CogsOverridesStore } from "../../storage/cogsOverridesStore.js";
-import { ShopsStore } from "../../storage/shopsStore.js";
+import { ShopsStore, normalizeShopDomain, isValidShopDomain } from "../../storage/shopsStore.js";
 import { resolveCostProfileFromConfig } from "../../domain/costModel/resolve.js";
 // ✅ persistence stores
 import { CostModelOverridesStore } from "../../storage/costModelOverridesStore.js";
 import { ActionPlanStateStore } from "../../storage/actionPlanStateStore.js";
+function redactOrderPII(order) {
+    // Defense-in-depth. GraphQL fetch omits customer fields, but keep this anyway.
+    if (!order || typeof order !== "object")
+        return order;
+    const clone = { ...order };
+    delete clone.customer;
+    delete clone.email;
+    delete clone.phone;
+    delete clone.billing_address;
+    delete clone.shipping_address;
+    delete clone.client_details;
+    delete clone.browser_ip;
+    delete clone.note;
+    delete clone.note_attributes;
+    delete clone.landing_site;
+    delete clone.landing_site_ref;
+    delete clone.contact_email;
+    return clone;
+}
 export async function createShopifyCtx(app) {
-    // Legacy envs (keep tests green)
-    const legacyShop = String(app.config.SHOPIFY_STORE_DOMAIN || "").trim().toLowerCase();
+    const legacyShop = normalizeShopDomain(app.config.SHOPIFY_STORE_DOMAIN || "");
     const legacyToken = String(app.config.SHOPIFY_ADMIN_TOKEN || "").trim();
-    // ✅ New store for OAuth tokens (MUST match oauth.route.ts DATA_DIR)
     const shopsStore = new ShopsStore({ dataDir: app.config.DATA_DIR });
     await shopsStore.ensureLoaded();
-    async function createShopifyForShop(shop) {
-        const token = await shopsStore.getAccessTokenOrThrow(shop);
+    const apiVersion = String(app.config.SHOPIFY_API_VERSION || "2024-01");
+    // -----------------------------
+    // ✅ Multi-shop COGS isolation
+    // -----------------------------
+    const cogsOverridesByShop = new Map();
+    const cogsServiceByShop = new Map();
+    async function getCogsOverridesStoreForShop(shopInput) {
+        const shop = normalizeShopDomain(shopInput);
+        if (!isValidShopDomain(shop))
+            throw Object.assign(new Error("Invalid shop domain"), { status: 400 });
+        const hit = cogsOverridesByShop.get(shop);
+        if (hit)
+            return hit;
+        const store = new CogsOverridesStore({ shop, dataDir: app.config.DATA_DIR });
+        await store.ensureLoaded();
+        cogsOverridesByShop.set(shop, store);
+        return store;
+    }
+    async function getCogsServiceForShop(shopInput) {
+        const shop = normalizeShopDomain(shopInput);
+        if (!isValidShopDomain(shop))
+            throw Object.assign(new Error("Invalid shop domain"), { status: 400 });
+        const hit = cogsServiceByShop.get(shop);
+        if (hit)
+            return hit;
+        const overrides = await getCogsOverridesStoreForShop(shop);
+        const service = new CogsService(overrides);
+        cogsServiceByShop.set(shop, service);
+        return service;
+    }
+    async function createShopifyForShop(shopInput) {
+        const shop = normalizeShopDomain(shopInput);
+        if (!isValidShopDomain(shop))
+            throw Object.assign(new Error("Invalid shop domain"), { status: 400 });
+        const token = await shopsStore.getAccessTokenOrThrow(shop); // refresh-safe internally
         return createShopifyClient({ shopDomain: shop, accessToken: token });
     }
-    async function fetchOrdersForShop(shop, days) {
-        const shopify = await createShopifyForShop(shop);
-        const since = new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000).toISOString();
-        const ordersPath = `/admin/api/2024-01/orders.json` +
-            `?status=any&limit=250&created_at_min=${encodeURIComponent(since)}`;
-        const json = await shopify.get(ordersPath);
-        return (json.orders ?? []);
+    async function fetchOrdersForShop(shopInput, days) {
+        const shop = normalizeShopDomain(shopInput);
+        if (!isValidShopDomain(shop))
+            throw Object.assign(new Error("Invalid shop domain"), { status: 400 });
+        const token = await shopsStore.getAccessTokenOrThrow(shop);
+        const orders = await fetchOrdersGraphql({
+            shop,
+            accessToken: token,
+            days,
+            apiVersion,
+        });
+        return orders.map(redactOrderPII);
     }
-    async function fetchOrderByIdForShop(shop, orderId) {
-        const shopify = await createShopifyForShop(shop);
-        const path = `/admin/api/2024-01/orders/${encodeURIComponent(orderId)}.json?status=any`;
-        const json = await shopify.get(path);
-        if (!json?.order) {
+    async function fetchOrderByIdForShop(shopInput, orderId) {
+        const shop = normalizeShopDomain(shopInput);
+        if (!isValidShopDomain(shop))
+            throw Object.assign(new Error("Invalid shop domain"), { status: 400 });
+        const token = await shopsStore.getAccessTokenOrThrow(shop);
+        const order = await fetchOrderByIdGraphql({
+            shop,
+            accessToken: token,
+            orderId,
+            apiVersion,
+        });
+        if (!order) {
             const err = new Error(`Order not found: ${orderId}`);
             err.status = 404;
             throw err;
         }
-        return json.order;
+        return redactOrderPII(order);
     }
-    // Legacy single-shop client (existing routes)
+    // Legacy single-shop client
     const shopify = legacyShop && legacyToken
         ? createShopifyClient({ shopDomain: legacyShop, accessToken: legacyToken })
         : legacyShop
@@ -44,24 +107,20 @@ export async function createShopifyCtx(app) {
                 shopDomain: legacyShop,
                 accessToken: await shopsStore.getAccessTokenOrThrow(legacyShop),
             })
-            : // dummy placeholder to avoid crash on boot; routes will error if used
-                createShopifyClient({
-                    shopDomain: "example.myshopify.com",
-                    accessToken: "missing_token",
-                });
-    // MVP persistence for manual COGS overrides + ignore flag
-    const cogsOverridesStore = new CogsOverridesStore();
+            : createShopifyClient({
+                shopDomain: "example.myshopify.com",
+                accessToken: "missing_token",
+            });
+    // ✅ Legacy stores become shop-scoped too (safe default)
+    const legacyShopKey = legacyShop || "unknown.myshopify.com";
+    const cogsOverridesStore = new CogsOverridesStore({ shop: legacyShopKey, dataDir: app.config.DATA_DIR });
     await cogsOverridesStore.ensureLoaded();
     const cogsService = new CogsService(cogsOverridesStore);
-    // base profile from config (no meta)
     const costProfile = resolveCostProfileFromConfig(app.config);
-    // persisted cost model overrides (fee/shipping/flags/ads mode + fixed costs)
-    const costModelOverridesStore = new CostModelOverridesStore({ shop: legacyShop || "unknown.myshopify.com" });
+    const costModelOverridesStore = new CostModelOverridesStore({ shop: legacyShopKey, dataDir: app.config.DATA_DIR });
     await costModelOverridesStore.ensureLoaded();
-    // persisted action plan state (status/notes)
-    const actionPlanStateStore = new ActionPlanStateStore({ shop: legacyShop || "unknown.myshopify.com" });
+    const actionPlanStateStore = new ActionPlanStateStore({ shop: legacyShopKey, dataDir: app.config.DATA_DIR });
     await actionPlanStateStore.ensureLoaded();
-    // legacy methods used by your existing routes
     async function fetchOrders(days) {
         if (!legacyShop) {
             const err = new Error("SHOPIFY_STORE_DOMAIN missing (legacy single-shop mode). Use ?shop=... + OAuth token store.");
@@ -85,6 +144,8 @@ export async function createShopifyCtx(app) {
         createShopifyForShop,
         fetchOrdersForShop,
         fetchOrderByIdForShop,
+        getCogsOverridesStoreForShop,
+        getCogsServiceForShop,
         cogsOverridesStore,
         cogsService,
         fetchOrders,

@@ -23,10 +23,25 @@ export function buildUnifiedRankingInputs(params: {
   marginDrift: any | null;
   breakEvenRisk: any | null;
 
-  fixedCosts?: { allocatedInPeriod?: number } | null;
+  fixedCosts?:
+    | {
+        allocatedInPeriod?: number;
+        lossInPeriod?: number;
+        fixedCostRatePct?: number | null;
+      }
+    | null;
 }) {
-  const { totals, missingCogsCount, missingCogsLossInPeriod, legacyAll, shippingSubsidy, shippingLossInPeriod, marginDrift, breakEvenRisk, fixedCosts } =
-    params;
+  const {
+    totals,
+    missingCogsCount,
+    missingCogsLossInPeriod,
+    legacyAll,
+    shippingSubsidy,
+    shippingLossInPeriod,
+    marginDrift,
+    breakEvenRisk,
+    fixedCosts,
+  } = params;
 
   const refundRatePctTotal = safeDiv(totals.refunds, totals.grossSales) * 100;
   const feeRatePctTotal = safeDiv(totals.paymentFees, totals.netAfterRefunds) * 100;
@@ -38,10 +53,22 @@ export function buildUnifiedRankingInputs(params: {
   const lowMarginOpp = legacyAll.find((x: any) => x?.reason === "LOW_MARGIN");
   const negativeOpp = legacyAll.find((x: any) => x?.reason === "NEGATIVE_CM");
 
-  // Fixed costs signal (from SSOT cost model + allocator)
-  const fixedCostsAllocatedInPeriod = Math.max(0, Number(fixedCosts?.allocatedInPeriod ?? 0));
+  // Fixed costs signal:
+  // Accept both:
+  // - allocatedInPeriod (summary-oriented naming)
+  // - lossInPeriod (opportunity-oriented naming)
+  const fixedCostsAllocatedInPeriod = Math.max(
+    0,
+    Number(fixedCosts?.allocatedInPeriod ?? fixedCosts?.lossInPeriod ?? 0)
+  );
+
   const fixedCostRatePctTotal =
-    totals.netAfterRefunds > 0 ? (fixedCostsAllocatedInPeriod / totals.netAfterRefunds) * 100 : 0;
+    fixedCosts?.fixedCostRatePct != null
+      ? Number(fixedCosts.fixedCostRatePct)
+      : totals.netAfterRefunds > 0
+        ? (fixedCostsAllocatedInPeriod / totals.netAfterRefunds) * 100
+        : 0;
+
   const includeFixedCosts = fixedCostsAllocatedInPeriod > 0;
 
   return {

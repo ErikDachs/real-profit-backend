@@ -1,27 +1,28 @@
 // src/domain/profit/cogsGovernance.ts
 
 /**
- * Missing-COGS governance (SSOT) - Option C:
- * - unitCost === undefined => missing ALWAYS (even if ignored)
- * - unitCost === 0 => missing unless ignored
+ * Missing-COGS governance (SSOT):
+ * - unitCost === undefined => missing
+ * - unitCost === null => missing
+ * - unitCost === NaN / non-finite => missing
+ * - unitCost === 0 => NOT missing (explicit zero-cost is valid)
  * - unitCost > 0 => not missing
  *
  * Interpretation:
- * - "ignored" means: 0 is allowed (freebie/service), but unknown is still missing data.
+ * - "missing" means unknown / invalid cost data
+ * - explicit zero is a valid, deterministic cost value
+ * - ignoreCogs can still be used by higher-level logic, but it is NOT required
+ *   to make explicit zero-cost values valid
  */
 export function isMissingUnitCost(params: {
-  unitCost: number | undefined;
+  unitCost: number | undefined | null;
   variantId: number;
   isIgnoredVariant?: (variantId: number) => boolean;
 }): boolean {
-  const { unitCost, variantId, isIgnoredVariant } = params;
+  const { unitCost } = params;
 
-  // Unknown cost is ALWAYS missing (even if ignored)
-  if (unitCost === undefined) return true;
+  if (unitCost === undefined || unitCost === null) return true;
+  if (!Number.isFinite(Number(unitCost))) return true;
 
-  // Explicit 0 is only OK if variant is ignored
-  if (unitCost === 0) return !Boolean(isIgnoredVariant?.(variantId));
-
-  // Any positive finite cost => not missing
   return false;
 }

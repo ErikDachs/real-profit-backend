@@ -1,20 +1,35 @@
 // src/storage/cogsOverridesStore.ts
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { isValidShopDomain, normalizeShopDomain } from "./shopsStore.js";
+function nowIso() {
+    return new Date().toISOString();
+}
 /**
- * MVP persistence for manual COGS overrides + ignore flag.
- * File: <projectRoot>/data/cogs-overrides.json
+ * ✅ SHOP-SCOPED persistence (PCD-safe):
+ * - File: <dataDir>/cogsOverrides.<shop>.json
  *
- * Later: replace with DB table:
- *  shop_id + variant_id + unit_cost + ignore_cogs + updated_at
+ * Backwards compatible:
+ * - If constructed with {filePath} or no params => legacy global file.
  */
 export class CogsOverridesStore {
     filePath;
     loaded = false;
     overrides = new Map();
     constructor(params) {
-        const defaultPath = path.join(process.cwd(), "data", "cogs-overrides.json");
-        this.filePath = params?.filePath ?? defaultPath;
+        const defaultLegacyPath = path.join(process.cwd(), "data", "cogs-overrides.json");
+        if (params && "shop" in params) {
+            const shop = normalizeShopDomain(params.shop);
+            if (!isValidShopDomain(shop)) {
+                // fail-fast: we do NOT want to write arbitrary filenames
+                throw new Error(`Invalid shop domain for CogsOverridesStore: ${String(params.shop)}`);
+            }
+            const dir = params.dataDir ?? path.join(process.cwd(), "data");
+            this.filePath = path.join(dir, `cogsOverrides.${shop}.json`);
+        }
+        else {
+            this.filePath = params?.filePath ?? defaultLegacyPath;
+        }
     }
     async ensureLoaded() {
         if (this.loaded)
@@ -37,12 +52,11 @@ export class CogsOverridesStore {
                         variantId,
                         unitCost,
                         ignoreCogs: false,
-                        updatedAt: updatedAt || new Date().toISOString(),
+                        updatedAt: updatedAt || nowIso(),
                     });
                 }
                 this.loaded = true;
-                // Persist migrated format once (best effort)
-                await this.persistToDisk();
+                await this.persistToDisk(); // best-effort migration
                 return;
             }
             // Load v2
@@ -50,11 +64,11 @@ export class CogsOverridesStore {
                 const v2 = json;
                 for (const [k, v] of Object.entries(v2.overrides ?? {})) {
                     const variantId = Number(k);
+                    if (!Number.isFinite(variantId) || variantId <= 0)
+                        continue;
                     const unitCostRaw = v?.unitCost;
                     const ignoreCogs = Boolean(v?.ignoreCogs ?? false);
                     const updatedAt = String(v?.updatedAt ?? "");
-                    if (!Number.isFinite(variantId) || variantId <= 0)
-                        continue;
                     let unitCost = undefined;
                     if (unitCostRaw !== undefined && unitCostRaw !== null && unitCostRaw !== "") {
                         const n = Number(unitCostRaw);
@@ -65,7 +79,7 @@ export class CogsOverridesStore {
                         variantId,
                         unitCost,
                         ignoreCogs,
-                        updatedAt: updatedAt || new Date().toISOString(),
+                        updatedAt: updatedAt || nowIso(),
                     });
                 }
                 this.loaded = true;
@@ -75,7 +89,6 @@ export class CogsOverridesStore {
             this.loaded = true;
         }
         catch {
-            // file missing -> fine
             this.loaded = true;
         }
     }
@@ -89,18 +102,11 @@ export class CogsOverridesStore {
         await this.ensureLoaded();
         return Array.from(this.overrides.values()).sort((a, b) => a.variantId - b.variantId);
     }
-    /**
-     * Upsert unitCost and/or ignore flag.
-     * - Pass unitCost to set/overwrite
-     * - Pass ignoreCogs to set/overwrite
-     * - Omit a field to keep it unchanged
-     */
     async upsert(params) {
         await this.ensureLoaded();
         const variantId = Number(params.variantId);
-        if (!Number.isFinite(variantId) || variantId <= 0) {
+        if (!Number.isFinite(variantId) || variantId <= 0)
             throw new Error("variantId must be a positive number");
-        }
         const prev = this.overrides.get(variantId);
         // unitCost handling
         let nextUnitCost = prev?.unitCost;
@@ -110,9 +116,8 @@ export class CogsOverridesStore {
             }
             else {
                 const unitCost = Number(params.unitCost);
-                if (!Number.isFinite(unitCost) || unitCost < 0) {
+                if (!Number.isFinite(unitCost) || unitCost < 0)
                     throw new Error("unitCost must be a number >= 0");
-                }
                 nextUnitCost = unitCost;
             }
         }
@@ -125,18 +130,32 @@ export class CogsOverridesStore {
             variantId,
             unitCost: nextUnitCost,
             ignoreCogs: nextIgnore,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso(),
         };
         this.overrides.set(variantId, rec);
         await this.persistToDisk();
         return rec;
+    }
+    /**
+     * ✅ PCD: clear ALL overrides for this store file.
+     * Idempotent.
+     */
+    async clearAll() {
+        await this.ensureLoaded();
+        this.overrides.clear();
+        try {
+            await fs.unlink(this.filePath);
+        }
+        catch {
+            // ignore
+        }
     }
     async persistToDisk() {
         const dir = path.dirname(this.filePath);
         await fs.mkdir(dir, { recursive: true });
         const shape = {
             version: 2,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso(),
             overrides: {},
         };
         for (const [variantId, rec] of this.overrides.entries()) {

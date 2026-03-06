@@ -2,133 +2,60 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 
 import { buildOrdersSummary } from "../../src/domain/profit/ordersSummary";
 import { buildProfitKillersInsights } from "../../src/domain/insights/profitKillers";
-
-// ✅ Health entry (falls der Pfad bei dir anders ist: anpassen)
 import { computeProfitHealthFromSummary } from "../../src/domain/health/profitHealth";
 
-type Fixture = {
-  name: string;
-  costConfig: {
-    feePercent: number;
-    feeFixed: number;
-    shipping?: { costPerOrder?: number };
-    flags?: { includeShippingCost?: boolean };
-    ads?: { periodTotal?: number };
-  };
-  orders: Array<{
-    id: string;
-    name?: string;
-    createdAt: string;
-    currency: string;
-    lineItems: Array<{ variantId: number; qty: number; unitPrice: number }>;
-    shippingRevenue?: number;
-    refunds?: number;
-  }>;
-  cogs: Record<string, number>;
-};
+import {
+  loadFixtures,
+  toDomainOrders,
+  makeFakeCogsService,
+  costProfileFromFixture,
+  dummyShopifyGET,
+  computeUnitCostByVariantOnce,
+} from "./_helpers";
 
-function loadFixtures(): Fixture[] {
-  const dir = path.join(process.cwd(), "tests", "golden", "fixtures");
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
-  return files.map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf-8")));
+const fixtures = loadFixtures();
+
+function getFx(name: string) {
+  const fx = fixtures.find((f) => f.name === name);
+  assert.ok(fx, `fixture not found: ${name}`);
+  return fx!;
 }
 
-function toDomainOrders(fx: Fixture) {
-  return fx.orders.map((o) => {
-    const totalPrice = o.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
-    return {
-      id: o.id,
-      name: o.name ?? o.id,
-      created_at: o.createdAt,
-      createdAt: o.createdAt,
-      currency: o.currency,
-      total_price: String(totalPrice),
-      line_items: o.lineItems.map((li) => ({
-        variant_id: li.variantId,
-        quantity: li.qty,
-        price: String(li.unitPrice),
-      })),
-      refunds: o.refunds
-        ? [
-            {
-              transactions: [{ amount: String(o.refunds) }],
-            },
-          ]
-        : [],
-      shipping_lines: [{ price: String(o.shippingRevenue ?? 0) }],
-    };
-  });
+async function buildSummaryForFixture(fx: any) {
+  const shop = "test-shop";
+  const days = 30;
+
+  const costProfile = costProfileFromFixture(fx);
+  const cogsService = makeFakeCogsService(fx);
+  const orders = toDomainOrders(fx);
+  const unitCostByVariant = await computeUnitCostByVariantOnce({ fx, orders, cogsService });
+
+  return buildOrdersSummary({
+    shop,
+    days,
+    adSpend: fx.costConfig.ads?.periodTotal ?? 0,
+    orders,
+    costProfile,
+    cogsService: cogsService as any,
+    shopifyGET: dummyShopifyGET,
+    unitCostByVariant,
+  } as any);
 }
 
-function makeFakeCogsService(fx: Fixture) {
-  return {
-    async computeUnitCostsByVariant(_shopifyGET: (path: string) => Promise<any>, variantIds: number[]) {
-      const m = new Map<number, number | undefined>();
-
-      for (const id of variantIds) {
-        const key = String(id);
-
-        // ✅ Missing key => unknown cost
-        const hasKey = Object.prototype.hasOwnProperty.call(fx.cogs, key);
-        if (!hasKey) {
-          m.set(id, undefined);
-          continue;
-        }
-
-        // ✅ Explicit values (including 0) are respected
-        const unitCostRaw = (fx.cogs as any)[key];
-        const unitCost = Number(unitCostRaw);
-
-        m.set(id, Number.isFinite(unitCost) ? unitCost : undefined);
-      }
-
-      return m;
-    },
-  };
-}
-
-async function dummyShopifyGET(_path: string) {
-  return {};
-}
-
-function costProfileFromFixture(fx: Fixture) {
-  return {
-    payment: {
-      feePercent: fx.costConfig.feePercent,
-      feeFixed: fx.costConfig.feeFixed,
-    },
-    shipping: {
-      costPerOrder: fx.costConfig.shipping?.costPerOrder ?? 0,
-    },
-    flags: {
-      includeShippingCost: fx.costConfig.flags?.includeShippingCost ?? true,
-    },
-    meta: {
-      fingerprint: `golden:${fx.name}:costprofile`,
-    },
-  } as any;
-}
-
-/**
- * Per-order summaries (SSOT) for insights
- */
-async function computePerOrderSummaries(params: { fx: Fixture; shop: string; days: number }) {
+async function computePerOrderSummaries(params: { fx: any; shop: string; days: number }) {
   const { fx, shop, days } = params;
 
   const costProfile = costProfileFromFixture(fx);
   const cogsService = makeFakeCogsService(fx);
   const domainOrders = toDomainOrders(fx);
-
-  const allVariantIds = domainOrders
-    .flatMap((o: any) => (o.line_items ?? []).map((li: any) => Number(li.variant_id)))
-    .filter((x: number) => Number.isFinite(x) && x > 0);
-
-  const unitCostByVariant = await (cogsService as any).computeUnitCostsByVariant(dummyShopifyGET, allVariantIds);
+  const unitCostByVariant = await computeUnitCostByVariantOnce({
+    fx,
+    orders: domainOrders,
+    cogsService,
+  });
 
   const perOrderSummaries: any[] = [];
   let missingCogsCount = 0;
@@ -146,11 +73,10 @@ async function computePerOrderSummaries(params: { fx: Fixture; shop: string; day
       cogsService: cogsService as any,
       shopifyGET: dummyShopifyGET,
       unitCostByVariant,
-    });
+    } as any);
 
     perOrderSummaries.push(s);
     missingCogsCount += Number(s.missingCogsCount ?? 0);
-
     shippingRevenueTotal += Number(s.shippingRevenue ?? 0);
     shippingCostTotal += Number(s.shippingCost ?? 0);
   }
@@ -162,6 +88,23 @@ async function computePerOrderSummaries(params: { fx: Fixture; shop: string; day
   };
 }
 
+function assertHealthShape(health: any, label: string) {
+  assert.ok(health, `${label}: health missing`);
+
+  const score = Number(health.score ?? health.healthScore ?? health.value);
+  assert.ok(Number.isFinite(score), `${label}: score not finite`);
+  assert.ok(score >= 0 && score <= 100, `${label}: score out of bounds (${score})`);
+
+  assert.ok(typeof health.status === "string" && health.status.length > 0, `${label}: status missing`);
+  assert.ok(health.components && typeof health.components === "object", `${label}: components missing`);
+  assert.ok(health.ratios && typeof health.ratios === "object", `${label}: ratios missing`);
+
+  if (health.drivers != null) {
+    assert.ok(Array.isArray(health.drivers), `${label}: drivers must be array`);
+    assert.ok(health.drivers.length <= 5, `${label}: drivers > 5`);
+  }
+}
+
 function assertSortedByLossDesc(items: any[], label: string) {
   for (let i = 1; i < items.length; i++) {
     const prev = Number(items[i - 1]?.estimatedMonthlyLoss ?? 0);
@@ -170,68 +113,88 @@ function assertSortedByLossDesc(items: any[], label: string) {
   }
 }
 
-const fixtures = loadFixtures();
+test("[golden] health: all fixtures produce bounded deterministic health output", async () => {
+  for (const fx of fixtures) {
+    const summaryA: any = await buildSummaryForFixture(fx);
+    const summaryB: any = await buildSummaryForFixture(fx);
 
-function getFx(name: string) {
-  const fx = fixtures.find((f) => f.name === name);
-  assert.ok(fx, `fixture not found: ${name}`);
-  return fx!;
-}
+    const healthA: any = computeProfitHealthFromSummary(summaryA);
+    const healthB: any = computeProfitHealthFromSummary(summaryB);
 
-// -------------------------------------------------------
-// 1) HEALTH Golden: score bounds + regression direction
-// -------------------------------------------------------
-test("[golden] health score: bounds + missing cogs worse than happy path", async () => {
-  const shop = "test-shop";
-  const days = 30;
+    assertHealthShape(healthA, fx.name);
+    assertHealthShape(healthB, fx.name);
 
-  const happy = getFx("case01_happy_path");
-  const missing = getFx("case03_missing_cogs");
-
-  async function buildSummaryForFixture(fx: Fixture) {
-    const costProfile = costProfileFromFixture(fx);
-    const cogsService = makeFakeCogsService(fx);
-    const orders = toDomainOrders(fx);
-    const adSpend = fx.costConfig.ads?.periodTotal ?? 0;
-
-    return buildOrdersSummary({
-      shop,
-      days,
-      adSpend,
-      orders,
-      costProfile,
-      cogsService: cogsService as any,
-      shopifyGET: dummyShopifyGET,
-    } as any);
+    assert.equal(
+      Number(healthA.score ?? 0),
+      Number(healthB.score ?? 0),
+      `${fx.name}: health score not deterministic`
+    );
+    assert.equal(
+      String(healthA.status ?? ""),
+      String(healthB.status ?? ""),
+      `${fx.name}: health status not deterministic`
+    );
   }
-
-  const happySummary: any = await buildSummaryForFixture(happy);
-  const missingSummary: any = await buildSummaryForFixture(missing);
-
-  // We call via any to avoid signature friction.
-  const happyHealth: any = (computeProfitHealthFromSummary as any)(happySummary);
-  const missingHealth: any = (computeProfitHealthFromSummary as any)(missingSummary);
-
-  assert.ok(happyHealth, "happyHealth missing");
-  assert.ok(missingHealth, "missingHealth missing");
-
-  const happyScore = Number(happyHealth.score ?? happyHealth.healthScore ?? happyHealth.value);
-  const missingScore = Number(missingHealth.score ?? missingHealth.healthScore ?? missingHealth.value);
-
-  assert.ok(Number.isFinite(happyScore), "happy score not finite");
-  assert.ok(Number.isFinite(missingScore), "missing score not finite");
-
-  assert.ok(happyScore >= 0 && happyScore <= 100, `happy score out of bounds: ${happyScore}`);
-  assert.ok(missingScore >= 0 && missingScore <= 100, `missing score out of bounds: ${missingScore}`);
-
-  // Hard direction: missing cogs should not be healthier than happy path
-  assert.ok(missingScore <= happyScore + 1e-9, `missing score (${missingScore}) should be <= happy (${happyScore})`);
 });
 
-// -------------------------------------------------------
-// 2) IMPACT SIMULATION Golden: shape + deterministic sort
-// -------------------------------------------------------
-test("[golden] impactSimulation: shape + deterministic ordering", async () => {
+test("[golden] health: missing COGS cases are never healthier than happy path", async () => {
+  const happySummary: any = await buildSummaryForFixture(getFx("case01_happy_path"));
+  const missingSummary: any = await buildSummaryForFixture(getFx("case03_missing_cogs"));
+  const partialMissingSummary: any = await buildSummaryForFixture(getFx("case12_partial_missing_cogs_multi_line"));
+
+  const happyHealth: any = computeProfitHealthFromSummary(happySummary);
+  const missingHealth: any = computeProfitHealthFromSummary(missingSummary);
+  const partialMissingHealth: any = computeProfitHealthFromSummary(partialMissingSummary);
+
+  const happyScore = Number(happyHealth.score ?? 0);
+  const missingScore = Number(missingHealth.score ?? 0);
+  const partialMissingScore = Number(partialMissingHealth.score ?? 0);
+
+  assert.ok(missingScore <= happyScore + 1e-9, `case03_missing_cogs should not beat happy path`);
+  assert.ok(
+    partialMissingScore <= happyScore + 1e-9,
+    `case12_partial_missing_cogs_multi_line should not beat happy path`
+  );
+});
+
+test("[golden] health: over-refund case stays finite and does not produce NaN", async () => {
+  const summary: any = await buildSummaryForFixture(getFx("case10_over_refund_negative_net"));
+  const health: any = computeProfitHealthFromSummary(summary);
+
+  assertHealthShape(health, "case10_over_refund_negative_net");
+
+  const numericFields = [
+    "grossSales",
+    "refunds",
+    "netAfterRefunds",
+    "cogs",
+    "paymentFees",
+    "shippingRevenue",
+    "shippingCost",
+    "shippingImpact",
+    "contributionMargin",
+    "profitAfterFees",
+    "profitAfterShipping",
+  ];
+
+  for (const key of numericFields) {
+    const val = Number(summary?.[key] ?? 0);
+    assert.ok(Number.isFinite(val), `case10_over_refund_negative_net: summary.${key} not finite`);
+  }
+
+  assert.ok(Number(summary.refunds ?? 0) > Number(summary.grossSales ?? 0), "fixture intent broken: refund not > gross");
+});
+
+test("[golden] health: mixed gift-card/physical order is not treated as gift-card-only", async () => {
+  const summary: any = await buildSummaryForFixture(getFx("case11_mixed_gift_card_and_physical"));
+
+  assert.equal(Number(summary.count ?? 0), 1, "case11 count mismatch");
+  assert.equal(Number(summary.giftCardOrdersCount ?? 0), 0, "case11 must not be treated as gift-card-only");
+  assert.equal(Number(summary.missingCogsCount ?? 0), 0, "case11 should not have missing COGS");
+  assert.ok(Number(summary.netAfterRefunds ?? 0) > 0, "case11 netAfterRefunds should stay positive");
+});
+
+test("[golden] impactSimulation: shape + deterministic ordering across all fixtures", async () => {
   const shop = "test-shop";
   const days = 30;
 
@@ -261,18 +224,60 @@ test("[golden] impactSimulation: shape + deterministic ordering", async () => {
     const sim: any[] = out.impactSimulation ?? [];
     assert.ok(Array.isArray(sim), `impactSimulation not array for fixture ${fx.name}`);
 
-    // may be empty depending on inputs; if non-empty validate & ensure deterministic sort
     if (sim.length > 0) {
       for (const it of sim) {
-        assert.ok(typeof it.type === "string" && it.type.length > 0, "impactSimulation.type missing");
-        assert.ok(typeof it.title === "string" && it.title.length > 0, "impactSimulation.title missing");
+        assert.ok(typeof it.type === "string" && it.type.length > 0, `${fx.name}: impactSimulation.type missing`);
+        assert.ok(typeof it.title === "string" && it.title.length > 0, `${fx.name}: impactSimulation.title missing`);
 
         const loss = Number(it.estimatedMonthlyLoss);
-        assert.ok(Number.isFinite(loss), "impactSimulation.estimatedMonthlyLoss must be finite");
-        assert.ok(loss >= 0, "impactSimulation.estimatedMonthlyLoss must be >= 0");
+        assert.ok(Number.isFinite(loss), `${fx.name}: estimatedMonthlyLoss must be finite`);
+        assert.ok(loss >= 0, `${fx.name}: estimatedMonthlyLoss must be >= 0`);
       }
 
       assertSortedByLossDesc(sim, `impactSimulation(${fx.name})`);
     }
   }
+});
+
+test("[golden] health: fixed-cost-pressure case stays bounded and reflects allocated fixed costs", async () => {
+  const fx = fixtures.find((f) => f.name === "case14_fixed_cost_pressure");
+  assert.ok(fx, "fixture not found: case14_fixed_cost_pressure");
+
+  const summary: any = await buildSummaryForFixture(fx);
+  const health: any = computeProfitHealthFromSummary(summary);
+
+  assert.ok(Number(summary.fixedCostsAllocatedInPeriod ?? 0) > 0, "case14 fixed costs must be allocated");
+  assert.ok(Number(summary.fixedCostRatioPct ?? 0) > 0, "case14 fixedCostRatioPct must be > 0");
+
+  assert.equal(
+    Number(summary.operatingProfit ?? 0),
+    Number(summary.profitAfterFixedCosts ?? 0),
+    "case14 operatingProfit must equal profitAfterFixedCosts"
+  );
+
+  const score = Number(health.score ?? 0);
+  assert.ok(Number.isFinite(score), "case14 health score must be finite");
+  assert.ok(score >= 0 && score <= 100, "case14 health score out of bounds");
+
+  const driverTypes = (health.drivers ?? []).map((d: any) => String(d?.type ?? ""));
+  assert.ok(
+    driverTypes.includes("FIXED_COST_PRESSURE") || Number(summary.fixedCostRatioPct ?? 0) > 0,
+    `case14 should at least preserve fixed-cost pressure semantics, got drivers: ${driverTypes.join(", ")}`
+  );
+});
+
+test("[golden] health: margin-drift fixture still produces valid bounded health output", async () => {
+  const fx = fixtures.find((f) => f.name === "case15_margin_drift_recent_drop");
+  assert.ok(fx, "fixture not found: case15_margin_drift_recent_drop");
+
+  const summary: any = await buildSummaryForFixture(fx);
+  const health: any = computeProfitHealthFromSummary(summary);
+
+  const score = Number(health.score ?? 0);
+
+  assert.ok(Number.isFinite(score), "case15 health score must be finite");
+  assert.ok(score >= 0 && score <= 100, "case15 health score out of bounds");
+
+  assert.ok(Number(summary.count ?? 0) >= 6, "case15 should contain multiple orders");
+  assert.ok(Number(summary.netAfterRefunds ?? 0) > 0, "case15 netAfterRefunds should remain positive overall");
 });

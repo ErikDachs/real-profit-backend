@@ -25,6 +25,9 @@ const fakeCtx = {
         getAccessTokenOrThrow: async (_shop) => "test_token",
     },
     createShopifyForShop: async (_shop) => ({ get: async (_path) => ({}) }),
+    // ✅ NEW: per-shop getters required by ShopifyCtx
+    getCogsOverridesStoreForShop: async (_shopDomain) => fakeCtx.cogsOverridesStore,
+    getCogsServiceForShop: async (_shopDomain) => fakeCtx.cogsService,
     fetchOrdersForShop: async (_shop, _days) => fakeOrders,
     fetchOrderByIdForShop: async (_shop, _orderId) => fakeOrders[0],
     cogsOverridesStore: {

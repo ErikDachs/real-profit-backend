@@ -17,6 +17,9 @@ const baseCtx = {
     createShopifyForShop: async (_shop) => ({
         get: async () => ({}),
     }),
+    // ✅ NEW: per-shop getters required by ShopifyCtx
+    getCogsOverridesStoreForShop: async (_shop) => baseCtx.cogsOverridesStore,
+    getCogsServiceForShop: async (_shop) => baseCtx.cogsService,
     fetchOrdersForShop: async (_shop, _days) => [],
     fetchOrderByIdForShop: async (_shop, _orderId) => ({}),
     actionPlanStateStore: {

@@ -1,5 +1,6 @@
-import { ShopsStore, ShopsStoreError, isValidShopDomain } from "../../storage/shopsStore.js";
+import { ShopsStore, ShopsStoreError, isValidShopDomain, normalizeShopDomain, } from "../../storage/shopsStore.js";
 import { buildAuthorizeUrl, exchangeCodeForAccessToken, randomState, verifyShopifyQueryHmac, ShopifyOAuthError, } from "../../integrations/shopify/oauth.js";
+import { registerWebhooksAfterInstall } from "../../integrations/shopify/webhooks.js";
 function errReply(e) {
     const status = Number(e?.status) || 500;
     return {
@@ -18,9 +19,11 @@ export async function registerShopifyOAuthRoutes(app) {
     const scopes = String(app.config.SHOPIFY_SCOPES || "read_orders,read_products").trim();
     const appUrl = String(app.config.APP_URL || "").trim();
     const redirectUri = `${appUrl.replace(/\/$/, "")}/api/shopify/oauth/callback`;
+    // Keep API version deterministic & aligned with your ctx.ts usage.
+    const apiVersion = "2024-01";
     app.get("/api/shopify/oauth/install", async (req, reply) => {
         try {
-            const shop = String(req.query.shop || "").trim().toLowerCase();
+            const shop = normalizeShopDomain(req.query.shop || "");
             if (!isValidShopDomain(shop)) {
                 reply.status(400);
                 return { error: "Invalid shop domain", code: "INVALID_SHOP" };
@@ -57,7 +60,7 @@ export async function registerShopifyOAuthRoutes(app) {
     });
     app.get("/api/shopify/oauth/callback", async (req, reply) => {
         try {
-            const shop = String(req.query.shop || "").trim().toLowerCase();
+            const shop = normalizeShopDomain(req.query.shop || "");
             const code = String(req.query.code || "").trim();
             const state = String(req.query.state || "").trim();
             if (!isValidShopDomain(shop))
@@ -72,11 +75,20 @@ export async function registerShopifyOAuthRoutes(app) {
             await shopsStore.consumePendingOAuthState({ shop, state });
             const tok = await exchangeCodeForAccessToken({ shop, apiKey, apiSecret, code });
             await shopsStore.upsertToken({ shop, accessToken: tok.access_token, scope: tok.scope ?? null });
+            // ✅ Register only REST-supported webhook(s) after install.
+            // Compliance topics are handled by your webhook endpoint but are not registered here.
+            const reg = await registerWebhooksAfterInstall({
+                shop,
+                accessToken: tok.access_token,
+                apiVersion,
+                appUrl,
+            });
             reply.header("Cache-Control", "no-store");
             return {
                 ok: true,
                 shop,
                 scope: tok.scope ?? null,
+                webhooks: reg,
                 next: `/api/orders/profit?shop=${encodeURIComponent(shop)}&days=30`,
             };
         }
@@ -88,6 +100,17 @@ export async function registerShopifyOAuthRoutes(app) {
             const { status, body } = errReply(e);
             reply.status(status);
             return body;
+        }
+    });
+    // ✅ Optional debug endpoint: shows persisted shops, token masked
+    app.get("/api/shopify/debug/shops", async (_req, reply) => {
+        try {
+            const rows = await shopsStore.listMasked();
+            return reply.send({ ok: true, count: rows.length, shops: rows });
+        }
+        catch (e) {
+            const { status, body } = errReply(e);
+            return reply.status(status).send(body);
         }
     });
 }

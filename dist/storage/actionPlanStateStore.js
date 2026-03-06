@@ -1,10 +1,13 @@
 // src/storage/actionPlanStateStore.ts
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isValidShopDomain, normalizeShopDomain } from "./shopsStore.js";
+function nowIso() {
+    return new Date().toISOString();
+}
 function isIsoLike(s) {
     if (!s || typeof s !== "string")
         return false;
-    // permissive: "YYYY-MM-DD" or ISO string
     return /^\d{4}-\d{2}-\d{2}($|T)/.test(s);
 }
 function clampNote(x) {
@@ -35,6 +38,11 @@ export class ActionPlanStateStore {
     file = null;
     constructor(params) {
         this.params = params;
+        const shop = normalizeShopDomain(params.shop);
+        if (!isValidShopDomain(shop)) {
+            throw new Error(`Invalid shop domain for ActionPlanStateStore: ${String(params.shop)}`);
+        }
+        this.params.shop = shop;
     }
     filePath() {
         const dir = this.params.dataDir ?? path.join(process.cwd(), "data");
@@ -51,7 +59,7 @@ export class ActionPlanStateStore {
                 this.file = null;
                 return;
             }
-            const statesRaw = (parsed.states && typeof parsed.states === "object") ? parsed.states : {};
+            const statesRaw = parsed.states && typeof parsed.states === "object" ? parsed.states : {};
             const states = {};
             for (const [actionId, rec] of Object.entries(statesRaw)) {
                 if (!actionId || typeof actionId !== "string")
@@ -61,7 +69,7 @@ export class ActionPlanStateStore {
                 const note = clampNote(r?.note);
                 const dismissedReason = clampReason(r?.dismissedReason);
                 const dueDate = r?.dueDate && isIsoLike(r?.dueDate) ? String(r?.dueDate) : null;
-                const updatedAt = r?.updatedAt && isIsoLike(r?.updatedAt) ? String(r?.updatedAt) : new Date().toISOString();
+                const updatedAt = r?.updatedAt && isIsoLike(r?.updatedAt) ? String(r?.updatedAt) : nowIso();
                 states[actionId] = {
                     actionId,
                     status,
@@ -74,7 +82,7 @@ export class ActionPlanStateStore {
             this.file = {
                 version: 1,
                 shop: String(parsed.shop ?? this.params.shop),
-                updatedAt: String(parsed.updatedAt ?? new Date().toISOString()),
+                updatedAt: String(parsed.updatedAt ?? nowIso()),
                 states,
             };
         }
@@ -102,32 +110,32 @@ export class ActionPlanStateStore {
         if (!actionId)
             throw new Error("actionId is required");
         const prev = this.getStateSync(actionId);
-        const nextStatus = params.status === undefined || params.status === null ? (prev?.status ?? "OPEN") : normalizeStatus(params.status);
-        const nextNote = params.note === undefined ? (prev?.note ?? null) : clampNote(params.note);
+        const nextStatus = params.status === undefined || params.status === null ? prev?.status ?? "OPEN" : normalizeStatus(params.status);
+        const nextNote = params.note === undefined ? prev?.note ?? null : clampNote(params.note);
         const nextDue = params.dueDate === undefined
-            ? (prev?.dueDate ?? null)
-            : (params.dueDate && isIsoLike(params.dueDate) ? String(params.dueDate) : null);
-        const nextDismissReason = params.dismissedReason === undefined
-            ? (prev?.dismissedReason ?? null)
-            : clampReason(params.dismissedReason);
-        // If dismissed -> allow reason; else clear dismissedReason by default
-        const dismissedReason = nextStatus === "DISMISSED" ? (nextDismissReason ?? null) : null;
+            ? prev?.dueDate ?? null
+            : params.dueDate && isIsoLike(params.dueDate)
+                ? String(params.dueDate)
+                : null;
+        const nextDismissReason = params.dismissedReason === undefined ? prev?.dismissedReason ?? null : clampReason(params.dismissedReason);
+        const dismissedReason = nextStatus === "DISMISSED" ? nextDismissReason ?? null : null;
         const rec = {
             actionId,
             status: nextStatus,
             note: nextNote ?? null,
             dueDate: nextDue ?? null,
             dismissedReason,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso(),
         };
-        const file = this.file ?? {
-            version: 1,
-            shop: this.params.shop,
-            updatedAt: new Date().toISOString(),
-            states: {},
-        };
+        const file = this.file ??
+            {
+                version: 1,
+                shop: this.params.shop,
+                updatedAt: nowIso(),
+                states: {},
+            };
         file.states[actionId] = rec;
-        file.updatedAt = new Date().toISOString();
+        file.updatedAt = nowIso();
         this.file = file;
         await this.persist();
         return rec;
@@ -140,18 +148,33 @@ export class ActionPlanStateStore {
         if (!this.file?.states?.[id])
             return;
         delete this.file.states[id];
-        this.file.updatedAt = new Date().toISOString();
+        this.file.updatedAt = nowIso();
         await this.persist();
+    }
+    /**
+     * ✅ PCD: clear ALL action plan state for this shop.
+     * Idempotent.
+     */
+    async clearAll() {
+        await this.ensureLoaded();
+        this.file = null;
+        try {
+            await fs.unlink(this.filePath());
+        }
+        catch {
+            // ignore
+        }
     }
     async persist() {
         const fp = this.filePath();
         await fs.mkdir(path.dirname(fp), { recursive: true });
-        const payload = this.file ?? {
-            version: 1,
-            shop: this.params.shop,
-            updatedAt: new Date().toISOString(),
-            states: {},
-        };
+        const payload = this.file ??
+            {
+                version: 1,
+                shop: this.params.shop,
+                updatedAt: nowIso(),
+                states: {},
+            };
         const tmp = `${fp}.tmp`;
         await fs.writeFile(tmp, JSON.stringify(payload, null, 2), "utf-8");
         await fs.rename(tmp, fp);

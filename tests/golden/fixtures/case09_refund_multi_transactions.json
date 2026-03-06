@@ -1,5 +1,5 @@
 {
-  "name": "case02_partial_refund",
+  "name": "case09_refund_multi_transactions",
   "costConfig": {
     "feePercent": 0.02,
     "feeFixed": 0.3,
@@ -9,13 +9,13 @@
   },
   "orders": [
     {
-      "id": "2001",
-      "name": "#2001",
-      "createdAt": "2026-02-21T10:00:00.000Z",
+      "id": "9001",
+      "name": "#9001",
+      "createdAt": "2026-02-28T10:00:00.000Z",
       "currency": "EUR",
       "lineItems": [{ "variantId": 111, "qty": 1, "unitPrice": 50.0 }],
-      "shippingRevenue": 4.9,
-      "refunds": 10.0
+      "shippingRevenue": 0.0,
+      "refundTransactions": [6.0, 4.0]
     }
   ],
   "cogs": {
@@ -23,19 +23,31 @@
   },
   "expected": {
     "ordersSummary": {
-      "missingCogsCount": 0,
       "orders": 1,
       "grossSales": 50.0,
       "refunds": 10.0,
       "netAfterRefunds": 40.0,
-      "shippingRevenue": 4.9,
+      "shippingRevenue": 0.0,
       "shippingCost": 4.0,
       "cogs": 18.0,
       "paymentFees": 1.1,
       "contributionMargin": 20.9,
       "profitAfterShipping": 16.9,
-      "profitAfterAds": 20.9,
-      "profitAfterAdsAndShipping": 16.9
+      "missingCogsCount": 0
+    },
+    "orderProfitByOrderId": {
+      "9001": {
+        "grossSales": 50.0,
+        "refunds": 10.0,
+        "netAfterRefunds": 40.0,
+        "cogs": 18.0,
+        "paymentFees": 1.1,
+        "contributionMargin": 20.9,
+        "shippingRevenue": 0.0,
+        "shippingCost": 4.0,
+        "profitAfterShipping": 16.9,
+        "hasMissingCogs": false
+      }
     }
   }
 }

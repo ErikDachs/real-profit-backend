@@ -21,12 +21,33 @@
   "cogs": {
     "111": 18.0
   },
-  "expected": {
-    "ordersSummary": {
-      "orders": 1,
+"expected": {
+  "ordersSummary": {
+    "orders": 1,
+    "grossSales": 50.0,
+    "refunds": 0.0,
+    "netAfterRefunds": 50.0,
+    "shippingRevenue": 4.9,
+    "shippingCost": 4.0,
+    "cogs": 18.0,
+    "paymentFees": 1.3,
+    "contributionMargin": 30.7,
+    "profitAfterShipping": 26.7,
+    "missingCogsCount": 0
+  },
+  "orderProfitByOrderId": {
+    "1001": {
       "grossSales": 50.0,
       "refunds": 0.0,
-      "netAfterRefunds": 50.0
+      "netAfterRefunds": 50.0,
+      "cogs": 18.0,
+      "paymentFees": 1.3,
+      "contributionMargin": 30.7,
+      "shippingRevenue": 4.9,
+      "shippingCost": 4.0,
+      "profitAfterShipping": 26.7,
+      "hasMissingCogs": false
     }
   }
+}
 }

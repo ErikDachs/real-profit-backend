@@ -1,49 +1,181 @@
 import crypto from "node:crypto";
-import { ShopsStore, isValidShopDomain } from "../../storage/shopsStore.js";
-function verifyWebhookHmac(params) {
-    const { rawBody, hmacHeader, secret } = params;
-    if (!hmacHeader)
+import { Readable } from "node:stream";
+import { ShopsStore, normalizeShopDomain, isValidShopDomain } from "../../storage/shopsStore.js";
+import { CostModelOverridesStore } from "../../storage/costModelOverridesStore.js";
+import { CogsOverridesStore } from "../../storage/cogsOverridesStore.js";
+import { ActionPlanStateStore } from "../../storage/actionPlanStateStore.js";
+import { WebhookDedupeStore } from "../../storage/webhookDedupeStore.js";
+// Normalize topics to lowercase
+const ALLOWED_TOPICS = new Set([
+    "app/uninstalled",
+    "shop/redact",
+    "customers/data_request",
+    "customers/redact",
+]);
+const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024; // 1MB hard cap
+function safeB64ToBuffer(b64) {
+    try {
+        if (!b64)
+            return null;
+        if (!/^[A-Za-z0-9+/=]+$/.test(b64))
+            return null;
+        return Buffer.from(b64, "base64");
+    }
+    catch {
+        return null;
+    }
+}
+export function verifyWebhookHmac({ rawBody, hmacHeader, secret }) {
+    if (!secret)
         return false;
-    const digest = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
-    const a = Buffer.from(digest, "base64");
-    const b = Buffer.from(hmacHeader, "base64");
+    const computedB64 = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
+    const a = safeB64ToBuffer(computedB64);
+    const b = safeB64ToBuffer(hmacHeader);
+    if (!a || !b)
+        return false;
     if (a.length !== b.length)
         return false;
     return crypto.timingSafeEqual(a, b);
 }
-export async function registerShopifyWebhooksRoutes(app) {
-    const shopsStore = new ShopsStore({ dataDir: app.config.DATA_DIR });
-    await shopsStore.ensureLoaded();
-    const apiSecret = String(app.config.SHOPIFY_API_SECRET || "").trim();
-    await app.register(async function webhookScope(instance) {
-        instance.addContentTypeParser("*", { parseAs: "buffer" }, (req, body, done) => {
-            req.rawBody = body;
-            const txt = body.toString("utf8");
-            try {
-                done(null, txt ? JSON.parse(txt) : {});
-            }
-            catch {
-                done(null, {});
-            }
-        });
-        instance.post("/api/shopify/webhooks", async (req, reply) => {
-            const rawBody = req.rawBody ?? Buffer.from("", "utf8");
-            const hmacHeader = String(req.headers["x-shopify-hmac-sha256"] ?? "");
-            const topic = String(req.headers["x-shopify-topic"] ?? "");
-            const shop = String(req.headers["x-shopify-shop-domain"] ?? "").toLowerCase();
-            const ok = verifyWebhookHmac({ rawBody, hmacHeader, secret: apiSecret });
-            if (!ok) {
-                reply.status(401);
-                return { ok: false, error: "Invalid webhook HMAC" };
-            }
-            reply.status(200);
-            if (topic === "app/uninstalled") {
-                if (isValidShopDomain(shop)) {
-                    await shopsStore.clearToken({ shop, reason: "UNINSTALLED" });
-                }
-                return { ok: true };
-            }
-            return { ok: true };
-        });
+function getHeader(req, name) {
+    const v = req.headers[name.toLowerCase()];
+    if (Array.isArray(v))
+        return String(v[0] ?? "");
+    return typeof v === "string" ? v : "";
+}
+function redactShopDomain(shop) {
+    const s = String(shop || "");
+    const parts = s.split(".");
+    if (parts.length < 3)
+        return "***";
+    const sub = parts[0] ?? "";
+    const redactedSub = sub.length <= 2 ? "***" : `${sub[0]}***${sub[sub.length - 1]}`;
+    return [redactedSub, ...parts.slice(1)].join(".");
+}
+function shortEventId(eventId) {
+    const s = String(eventId || "").trim();
+    if (!s)
+        return undefined;
+    return s.length <= 10 ? s : `${s.slice(0, 6)}…${s.slice(-3)}`;
+}
+function dataDirFromEnv() {
+    const v = String(process.env.DATA_DIR ?? "").trim();
+    return v ? v : undefined;
+}
+async function readStreamToBuffer(payload, limitBytes) {
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of payload) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buf.length;
+        if (total > limitBytes) {
+            const err = new Error("Webhook body too large");
+            err.statusCode = 413;
+            throw err;
+        }
+        chunks.push(buf);
+    }
+    return Buffer.concat(chunks);
+}
+async function handleWebhook(instance, req, reply) {
+    const rawBody = req.rawBody ?? Buffer.from("");
+    const hmacHeader = getHeader(req, "x-shopify-hmac-sha256");
+    const topicRaw = getHeader(req, "x-shopify-topic");
+    const shopHeader = getHeader(req, "x-shopify-shop-domain");
+    const eventId = getHeader(req, "x-shopify-event-id");
+    // Missing required auth inputs => 401
+    if (!hmacHeader || !topicRaw || !shopHeader) {
+        return reply.status(401).send();
+    }
+    const topic = String(topicRaw).trim().toLowerCase();
+    // Allowlist: unknown topics => 200 No-Op
+    if (!ALLOWED_TOPICS.has(topic)) {
+        instance.log.info({ evt: "shopify_webhook_noop", topic, shop: redactShopDomain(shopHeader) }, "Webhook noop (unsupported topic)");
+        return reply.status(200).send();
+    }
+    const ok = verifyWebhookHmac({
+        rawBody,
+        hmacHeader,
+        secret: process.env.SHOPIFY_API_SECRET || "",
     });
+    instance.log.info({
+        evt: "shopify_webhook",
+        ok,
+        topic,
+        shop: redactShopDomain(shopHeader),
+        eventId: shortEventId(eventId),
+        rawLen: rawBody.length,
+    }, "Webhook received");
+    if (!ok)
+        return reply.status(401).send();
+    const shop = normalizeShopDomain(shopHeader);
+    if (!isValidShopDomain(shop)) {
+        instance.log.warn({ evt: "shopify_webhook_invalid_shop", topic }, "Invalid shop domain in webhook");
+        return reply.status(200).send();
+    }
+    const dataDir = dataDirFromEnv();
+    // Optional dedupe
+    if (eventId) {
+        try {
+            const dedupe = new WebhookDedupeStore({ shop, dataDir });
+            const seen = await dedupe.has(eventId);
+            if (seen)
+                return reply.status(200).send();
+            await dedupe.put(eventId, 30);
+        }
+        catch {
+            // ignore, rely on idempotence
+        }
+    }
+    try {
+        switch (topic) {
+            case "app/uninstalled":
+            case "shop/redact": {
+                const shopsStore = new ShopsStore({ dataDir });
+                await shopsStore.clearToken({ shop, reason: "UNINSTALLED" });
+                const costModel = new CostModelOverridesStore({ shop, dataDir });
+                await costModel.clear();
+                const cogs = new CogsOverridesStore({ shop, dataDir });
+                await cogs.clearAll();
+                const action = new ActionPlanStateStore({ shop, dataDir });
+                await action.clearAll();
+                break;
+            }
+            case "customers/data_request":
+            case "customers/redact": {
+                // ack-only (no customer PII persisted)
+                break;
+            }
+        }
+        return reply.status(200).send();
+    }
+    catch (e) {
+        instance.log.warn({ evt: "shopify_webhook_failed", topic, shop: redactShopDomain(shop) }, "Webhook processing failed");
+        return reply.status(500).send();
+    }
+}
+export const shopifyWebhooksRoute = async (instance) => {
+    // One canonical endpoint (your current approach)
+    instance.post("/api/shopify/webhooks", {
+        preParsing: async (req, _reply, payload) => {
+            const raw = await readStreamToBuffer(payload, MAX_WEBHOOK_BODY_BYTES);
+            req.rawBody = raw;
+            return Readable.from(raw);
+        },
+    }, async (req, reply) => handleWebhook(instance, req, reply));
+    // OPTIONAL: legacy/alternate paths to satisfy stubborn compliance checkers
+    // You can point Shopify to these explicitly if needed, or just keep them as safety net.
+    const legacyPaths = ["/shop/redact", "/customers/redact", "/customers/data_request", "/app/uninstalled"];
+    for (const p of legacyPaths) {
+        instance.post(p, {
+            preParsing: async (req, _reply, payload) => {
+                const raw = await readStreamToBuffer(payload, MAX_WEBHOOK_BODY_BYTES);
+                req.rawBody = raw;
+                return Readable.from(raw);
+            },
+        }, async (req, reply) => handleWebhook(instance, req, reply));
+    }
+};
+export async function registerShopifyWebhooksRoutes(app) {
+    await app.register(shopifyWebhooksRoute);
 }

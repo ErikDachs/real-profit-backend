@@ -1,12 +1,18 @@
 // src/storage/costModelOverridesStore.ts
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isValidShopDomain, normalizeShopDomain } from "./shopsStore.js";
 export class CostModelOverridesStore {
     params;
     loaded = false;
     persisted = null;
     constructor(params) {
         this.params = params;
+        const shop = normalizeShopDomain(params.shop);
+        if (!isValidShopDomain(shop)) {
+            throw new Error(`Invalid shop domain for CostModelOverridesStore: ${String(params.shop)}`);
+        }
+        this.params.shop = shop;
     }
     filePath() {
         const dir = this.params.dataDir ?? path.join(process.cwd(), "data");

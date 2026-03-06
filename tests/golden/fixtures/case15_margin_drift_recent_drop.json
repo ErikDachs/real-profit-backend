@@ -1,0 +1,115 @@
+{
+  "name": "case15_margin_drift_recent_drop",
+  "costConfig": {
+    "feePercent": 0.02,
+    "feeFixed": 0.3,
+    "shipping": { "costPerOrder": 4.0 },
+    "flags": { "includeShippingCost": true },
+    "ads": { "periodTotal": 0.0 }
+  },
+  "orders": [
+    {
+      "id": "15001",
+      "name": "#15001",
+      "createdAt": "2026-02-01T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1501, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    },
+    {
+      "id": "15002",
+      "name": "#15002",
+      "createdAt": "2026-02-03T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1501, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    },
+    {
+      "id": "15003",
+      "name": "#15003",
+      "createdAt": "2026-02-05T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1501, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    },
+    {
+      "id": "15004",
+      "name": "#15004",
+      "createdAt": "2026-02-07T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1501, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    },
+    {
+      "id": "15005",
+      "name": "#15005",
+      "createdAt": "2026-02-09T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1501, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    },
+    {
+      "id": "15006",
+      "name": "#15006",
+      "createdAt": "2026-02-11T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1501, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    },
+    {
+      "id": "15007",
+      "name": "#15007",
+      "createdAt": "2026-02-13T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1501, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 4.9,
+      "refunds": 0.0
+    },
+    {
+      "id": "15008",
+      "name": "#15008",
+      "createdAt": "2026-03-01T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1502, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 0.0,
+      "refunds": 20.0
+    },
+    {
+      "id": "15009",
+      "name": "#15009",
+      "createdAt": "2026-03-02T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1502, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 0.0,
+      "refunds": 20.0
+    },
+    {
+      "id": "15010",
+      "name": "#15010",
+      "createdAt": "2026-03-03T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1502, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 0.0,
+      "refunds": 20.0
+    },
+    {
+      "id": "15011",
+      "name": "#15011",
+      "createdAt": "2026-03-04T10:00:00.000Z",
+      "currency": "EUR",
+      "lineItems": [{ "variantId": 1502, "qty": 1, "unitPrice": 100.0 }],
+      "shippingRevenue": 0.0,
+      "refunds": 20.0
+    }
+  ],
+  "cogs": {
+    "1501": 30.0,
+    "1502": 70.0
+  }
+}

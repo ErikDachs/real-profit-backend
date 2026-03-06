@@ -21,6 +21,8 @@
   "cogs": {  },
   "expected": {
     "ordersSummary": {
+      "missingCogsRatePct": 100.0,
+      "isCogsReliable": false,
       "orders": 1,
       "grossSales": 50.0,
       "refunds": 0.0,
