@@ -170,11 +170,11 @@ export async function calculateOrderProfit(params: {
     includeShippingCost && !isGiftCardOnlyOrder ? Number(costProfile.shipping?.costPerOrder || 0) : 0;
 
   const shippingCost = shippingCostPerOrder;
-  const shippingImpact = shippingRevenue - shippingCost;
+const shippingImpact = shippingRevenue - shippingCost;
 
-  // Profit fields (remain consistent with KPIs)
-  const profitAfterFees = contributionMargin;
-  const profitAfterShipping = profitAfterFees - shippingCost;
+// Profit fields (remain consistent with KPIs)
+const profitAfterFees = contributionMargin;
+const profitAfterShipping = profitAfterFees + shippingImpact;
 
   const profitMarginAfterShippingPct = netAfterRefunds > 0 ? (profitAfterShipping / netAfterRefunds) * 100 : 0;
 

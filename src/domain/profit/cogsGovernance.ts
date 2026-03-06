@@ -19,10 +19,14 @@ export function isMissingUnitCost(params: {
   variantId: number;
   isIgnoredVariant?: (variantId: number) => boolean;
 }): boolean {
-  const { unitCost } = params;
+  const { unitCost, variantId, isIgnoredVariant } = params;
 
   if (unitCost === undefined || unitCost === null) return true;
   if (!Number.isFinite(Number(unitCost))) return true;
+
+  if (Number(unitCost) === 0) {
+    return isIgnoredVariant ? !isIgnoredVariant(variantId) : true;
+  }
 
   return false;
 }

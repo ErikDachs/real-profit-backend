@@ -79,7 +79,8 @@ describe("calculateOrderProfit (SSOT)", () => {
     expect(out.shippingCost).toBe(7);
 
     // profitAfterShipping = contributionMargin - shippingCost = 49.95
-    expect(out.profitAfterShipping).toBeCloseTo(49.95, 2);
+expect(out.shippingImpact).toBe(-2);
+expect(out.profitAfterShipping).toBeCloseTo(54.95, 2);
 
     // compatibility
     expect(out.profitAfterFees).toBeCloseTo(out.contributionMargin, 5);

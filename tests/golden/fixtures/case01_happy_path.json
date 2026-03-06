@@ -32,7 +32,7 @@
     "cogs": 18.0,
     "paymentFees": 1.3,
     "contributionMargin": 30.7,
-    "profitAfterShipping": 26.7,
+    "profitAfterShipping": 31.6,
     "missingCogsCount": 0
   },
   "orderProfitByOrderId": {
@@ -45,7 +45,7 @@
       "contributionMargin": 30.7,
       "shippingRevenue": 4.9,
       "shippingCost": 4.0,
-      "profitAfterShipping": 26.7,
+      "profitAfterShipping": 31.6,
       "hasMissingCogs": false
     }
   }

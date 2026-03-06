@@ -118,7 +118,7 @@ describe("buildOrdersSummary", () => {
     else expect(out.breakEvenRoas).toBeCloseTo(expectedBe, 2);
 
     // profitAfterShipping = CM - shippingCost
-    expect(out.profitAfterShipping).toBeCloseTo(expectedCm - 14, 2);
+    expect(out.profitAfterShipping).toBeCloseTo(expectedCm + out.shippingImpact, 2);
 
     // profitAfterAds = profitAfterFees - adSpend
     expect(out.adSpend).toBe(40);
@@ -126,10 +126,10 @@ describe("buildOrdersSummary", () => {
     expect(out.profitAfterAds).toBeCloseTo(expectedCm - 40, 2);
 
     // profitAfterAdsAndShipping = profitAfterShipping - adSpend
-    expect(out.profitAfterAdsAndShipping).toBeCloseTo(expectedCm - 14 - 40, 2);
+    expect(out.profitAfterAdsAndShipping).toBeCloseTo(out.profitAfterShipping - 40, 2);
 
     // sanity margins
-    expect(out.profitMarginAfterShippingPct).toBeCloseTo(((expectedCm - 14) / 150) * 100, 2);
+expect(out.profitMarginAfterShippingPct).toBeCloseTo(((expectedCm - 9) / 150) * 100, 2);
 
     // Since we provided known unit costs for used variants, missingCogsCount should be 0
     expect(out.missingCogsCount).toBe(0);
@@ -171,7 +171,7 @@ describe("buildOrdersSummary", () => {
     expect(out.shippingRevenue).toBe(5);
     expect(out.shippingCost).toBe(0);
     expect(out.shippingImpact).toBe(5);
-    expect(out.profitAfterShipping).toBe(out.profitAfterFees);
+    expect(out.profitAfterShipping).toBe(out.profitAfterFees + out.shippingImpact);
 
     // ✅ With your current governance (Option C): unitCost===0 counts as missing unless ignored.
     // In this test we do NOT pass isIgnoredVariant => missingCogsCount should be 1.

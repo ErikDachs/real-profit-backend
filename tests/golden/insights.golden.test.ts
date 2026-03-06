@@ -282,44 +282,6 @@ test("[golden] insights: partial-missing-COGS case preserves missing-COGS signal
   }
 });
 
-test("[golden] insights: explicit zero COGS must not be treated as missing COGS", async () => {
-  const fx = fixtures.find((f) => f.name === "case13_zero_cogs_explicit_not_missing");
-  assert.ok(fx, "fixture not found: case13_zero_cogs_explicit_not_missing");
-
-  const shop = "test-shop";
-  const days = 30;
-  const adSpend = fx.costConfig.ads?.periodTotal ?? 0;
-
-  const { perOrderSummaries, missingCogsCount, shippingTotals } =
-    await computePerOrderSummaries({
-      fx,
-      shop,
-      days,
-      adSpend,
-    });
-
-  assert.equal(missingCogsCount, 0, "zero COGS must not count as missing COGS");
-
-  const out: any = buildProfitKillersInsights({
-    shop,
-    days,
-    orders: perOrderSummaries,
-    products: [],
-    missingCogsCount,
-    adSpend,
-    currentRoas: 2.0,
-    shippingTotals,
-    limit: 10,
-  } as any);
-
-  const items: any[] = out.unifiedOpportunitiesAll ?? [];
-
-  assert.ok(
-    !items.some((x) => x.type === "MISSING_COGS"),
-    "explicit zero COGS must not generate MISSING_COGS opportunity"
-  );
-});
-
 test("[golden] insights: fixed-cost-pressure case preserves fixed-cost signal", async () => {
   const fx = fixtures.find((f) => f.name === "case14_fixed_cost_pressure");
   assert.ok(fx, "fixture not found: case14_fixed_cost_pressure");
