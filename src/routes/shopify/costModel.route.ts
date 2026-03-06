@@ -1,6 +1,6 @@
-// src/routes/shopify/costModel.route.ts
 import type { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
+import { parseShop } from "./helpers.js";
 
 import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
 import type { CostProfileOverrides } from "../../domain/costModel/types.js";
@@ -19,9 +19,10 @@ function mergeOverrides(a?: CostProfileOverrides, b?: CostProfileOverrides): Cos
   if (!out.payment && !out.shipping && !out.ads && !out.flags && !out.fixedCosts) return undefined;
   return out;
 }
+
 /**
  * SECURITY:
- * Never return resolvedFrom/config/env in API responses (can contain secrets like SHOPIFY_ADMIN_TOKEN).
+ * Never return resolvedFrom/config/env in API responses.
  * Only return resolved values + fingerprint.
  */
 function sanitizeResolvedProfile(resolved: any) {
@@ -29,14 +30,14 @@ function sanitizeResolvedProfile(resolved: any) {
     payment: resolved?.payment,
     shipping: resolved?.shipping,
     ads: resolved?.ads,
-fixedCosts: {
-  daysInMonth: resolved?.fixedCosts?.daysInMonth ?? null,
-  allocationMode: resolved?.fixedCosts?.allocationMode ?? null,
-  monthlyItems: resolved?.fixedCosts?.monthlyItems ?? [],
-},
-derived: {
-  fixedCostsMonthlyTotal: resolved?.derived?.fixedCostsMonthlyTotal ?? 0,
-},
+    fixedCosts: {
+      daysInMonth: resolved?.fixedCosts?.daysInMonth ?? null,
+      allocationMode: resolved?.fixedCosts?.allocationMode ?? null,
+      monthlyItems: resolved?.fixedCosts?.monthlyItems ?? [],
+    },
+    derived: {
+      fixedCostsMonthlyTotal: resolved?.derived?.fixedCostsMonthlyTotal ?? 0,
+    },
     flags: resolved?.flags,
     meta: {
       fingerprint: resolved?.meta?.fingerprint ?? null,
@@ -46,10 +47,20 @@ derived: {
 
 export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
   // GET: show persisted overrides + resolved profile from config+persisted
-  app.get("/api/cost-model", async (_req, reply) => {
+  app.get("/api/cost-model", async (req, reply) => {
     try {
-      await ctx.costModelOverridesStore.ensureLoaded();
-      const persisted = ctx.costModelOverridesStore.getOverridesSync();
+      const q = req.query as any;
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
+      await costModelOverridesStore.ensureLoaded();
+      const persisted = costModelOverridesStore.getOverridesSync();
 
       const resolved = resolveCostProfile({
         config: (app as any).config ?? {},
@@ -57,9 +68,9 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
       });
 
       return reply.send({
-        shop: ctx.shop,
+        shop,
         persistedOverrides: persisted ?? null,
-        persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+        persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         resolvedProfile: sanitizeResolvedProfile(resolved),
       });
     } catch (err: any) {
@@ -70,8 +81,17 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
   // PUT: replace persisted overrides
   app.put("/api/cost-model", async (req, reply) => {
     try {
+      const q = req.query as any;
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
       const body: any = (req as any).body ?? {};
-      
       const overrides = costOverridesFromAny(body);
 
       if (!overrides) {
@@ -81,7 +101,7 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
         });
       }
 
-      await ctx.costModelOverridesStore.setOverrides(overrides);
+      await costModelOverridesStore.setOverrides(overrides);
 
       const resolved = resolveCostProfile({
         config: (app as any).config ?? {},
@@ -90,9 +110,9 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
 
       return reply.send({
         ok: true,
-        shop: ctx.shop,
+        shop,
         persistedOverrides: overrides,
-        persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+        persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         resolvedProfile: sanitizeResolvedProfile(resolved),
       });
     } catch (err: any) {
@@ -103,8 +123,17 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
   // PATCH: merge into persisted overrides (partial update)
   app.patch("/api/cost-model", async (req, reply) => {
     try {
+      const q = req.query as any;
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
       const body: any = (req as any).body ?? {};
-      
       const patch = costOverridesFromAny(body);
 
       if (!patch) {
@@ -114,11 +143,11 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
         });
       }
 
-      await ctx.costModelOverridesStore.ensureLoaded();
-      const current = ctx.costModelOverridesStore.getOverridesSync();
+      await costModelOverridesStore.ensureLoaded();
+      const current = costModelOverridesStore.getOverridesSync();
 
       const merged = mergeOverrides(current, patch) ?? {};
-      await ctx.costModelOverridesStore.setOverrides(merged);
+      await costModelOverridesStore.setOverrides(merged);
 
       const resolved = resolveCostProfile({
         config: (app as any).config ?? {},
@@ -127,9 +156,9 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
 
       return reply.send({
         ok: true,
-        shop: ctx.shop,
+        shop,
         persistedOverrides: merged,
-        persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+        persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         resolvedProfile: sanitizeResolvedProfile(resolved),
       });
     } catch (err: any) {
@@ -138,9 +167,19 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
   });
 
   // DELETE: clear persisted overrides
-  app.delete("/api/cost-model", async (_req, reply) => {
+  app.delete("/api/cost-model", async (req, reply) => {
     try {
-      await ctx.costModelOverridesStore.clear();
+      const q = req.query as any;
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
+      await costModelOverridesStore.clear();
 
       const resolved = resolveCostProfile({
         config: (app as any).config ?? {},
@@ -149,7 +188,7 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
 
       return reply.send({
         ok: true,
-        shop: ctx.shop,
+        shop,
         persistedOverrides: null,
         persistedUpdatedAt: null,
         resolvedProfile: sanitizeResolvedProfile(resolved),

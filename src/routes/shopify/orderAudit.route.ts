@@ -1,4 +1,3 @@
-// src/routes/shopify/orderAudit.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 
@@ -7,6 +6,7 @@ import { round2 } from "../../utils/money.js";
 
 // ✅ SSOT Cost Model Engine
 import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
+import { parseShop } from "./helpers.js";
 
 function parseOrderId(raw: any): { ok: true; id: string } | { ok: false; status: number; error: string } {
   const s = String(raw ?? "").trim();
@@ -23,30 +23,40 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
 
       const q = req.query as any;
 
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
       // ✅ Resolve cost profile per request (config + optional overrides)
       const costProfile = resolveCostProfile({
         config: (app as any).config ?? {},
         overrides: costOverridesFromAny(q),
       });
 
-      const order = await ctx.fetchOrderById(parsed.id);
+      const order = shop === ctx.shop
+        ? await ctx.fetchOrderById(parsed.id)
+        : await ctx.fetchOrderByIdForShop(shop, parsed.id);
 
-      // Pull line items + unit costs (override wins). Missing => 0
       const variantQty = extractVariantQtyFromOrder(order);
       const variantIds = variantQty.map((x) => x.variantId);
 
-      const unitCostByVariant = await ctx.cogsService.computeUnitCostsByVariant(ctx.shopify.get, variantIds);
+      const unitCostByVariant = await cogsService.computeUnitCostsByVariant(shopifyClient.get, variantIds);
 
-      // Use SSOT order profit function
       const profit = await calculateOrderProfit({
         order,
         costProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
         unitCostByVariant,
       });
 
-      // Build line-item audit (deterministic)
       const rawLineItems = Array.isArray(order?.line_items) ? order.line_items : [];
       const byVariantMeta = new Map<number, any>();
       for (const li of rawLineItems) {
@@ -67,7 +77,6 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
           cogs: round2(cogs),
           missingCogs,
 
-          // helpful UI fields if present
           title: meta?.title ?? null,
           sku: meta?.sku ?? null,
           productId: meta?.product_id ?? null,
@@ -86,7 +95,6 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
         fulfillmentStatus: order?.fulfillment_status ?? null,
       };
 
-      // Transparent “explain” fields (use RESOLVED cost profile, not ctx)
       const configInputs = {
         payment: {
           feePercent: Number(costProfile.payment?.feePercent ?? 0),
@@ -97,14 +105,12 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
           costPerOrder: Number(costProfile.shipping?.costPerOrder ?? 0),
         },
         ads: {
-  // ResolvedCostProfile currently doesn't expose a typed `ads` object.
-  // Keep it deterministic and compatible with different model shapes.
-  allocationMode:
-    (costProfile as any).ads?.allocationMode ??
-    (costProfile as any).adAllocationMode ??
-    (costProfile as any).flags?.adAllocationMode ??
-    "BY_NET_SALES",
-},
+          allocationMode:
+            (costProfile as any).ads?.allocationMode ??
+            (costProfile as any).adAllocationMode ??
+            (costProfile as any).flags?.adAllocationMode ??
+            "BY_NET_SALES",
+        },
         fingerprint: costProfile.meta.fingerprint,
       };
 
@@ -115,7 +121,7 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
 
       return reply.send({
         type: "order_audit",
-        shop: ctx.shop,
+        shop,
         order: orderMeta,
 
         costModel: configInputs,

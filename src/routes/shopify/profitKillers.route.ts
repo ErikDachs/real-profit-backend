@@ -1,16 +1,22 @@
-// src/routes/shopify/profitKillers.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit.js";
 import { buildDailyProfit } from "../../domain/profitDaily.js";
 import { buildProfitKillersInsights } from "../../domain/insights.js";
-import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
+import {
+  parseDays,
+  parseLimit,
+  parseAdInputs,
+  parseShop,
+  precomputeUnitCostsForOrders,
+  effectiveCostOverrides,
+} from "./helpers.js";
 import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation.js";
 
 // ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
-// ✅ NEW: Opportunity -> Scenario simulations (true re-run via SSOT engine)
+// ✅ Opportunity -> Scenario simulations (true re-run via SSOT engine)
 import { runOpportunityScenarioSimulations } from "../../domain/simulations/runScenarioPresets.js";
 
 export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx) {
@@ -22,9 +28,32 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
       const limitNum = parseLimit(q, 10);
       const { adSpend, currentRoas } = parseAdInputs(q);
 
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+
+      const orders = shop === ctx.shop
+        ? await ctx.fetchOrders(daysNum)
+        : await ctx.fetchOrdersForShop(shop, daysNum);
+
+      const cogsOverridesStore = shop === ctx.shop
+        ? ctx.cogsOverridesStore
+        : await ctx.getCogsOverridesStoreForShop(shop);
+
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
       // ✅ Persisted overrides + request overrides (request wins)
-      await ctx.costModelOverridesStore.ensureLoaded();
-      const persisted = ctx.costModelOverridesStore.getOverridesSync();
+      await costModelOverridesStore.ensureLoaded();
+      const persisted = costModelOverridesStore.getOverridesSync();
       const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
 
       // ✅ Resolve cost profile per request (config + merged overrides)
@@ -33,13 +62,11 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
         overrides: mergedOverrides,
       });
 
-      const orders = await ctx.fetchOrders(daysNum);
-
       // Precompute unit costs (shared across all order profits + scenario simulations)
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
       });
 
       const orderProfits: any[] = [];
@@ -47,10 +74,10 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
         const p = await calculateOrderProfit({
           order: o,
           costProfile,
-          cogsService: ctx.cogsService,
-          shopifyGET: ctx.shopify.get,
+          cogsService,
+          shopifyGET: shopifyClient.get,
           unitCostByVariant,
-          isIgnoredVariant: (variantId: number) => ctx.cogsOverridesStore.isIgnoredSync(variantId),
+          isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
         });
 
         orderProfits.push({
@@ -79,7 +106,7 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
       }
 
       const daily = buildDailyProfit({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orderProfits: orderProfits.map((x) => ({
           createdAt: x.createdAt,
@@ -99,12 +126,12 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
       });
 
       const productResult = await buildProductsProfit({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orders,
         costProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
       });
 
       const productsRaw = (productResult?.products ?? []) as any[];
@@ -128,7 +155,7 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
       });
 
       const insights = buildProfitKillersInsights({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orders: ordersEnriched,
         products: productsEnriched,
@@ -151,17 +178,17 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
       const scenarioPack =
         topOpps.length > 0
           ? await runOpportunityScenarioSimulations({
-              shop: ctx.shop,
+              shop,
               days: daysNum,
               adSpend: adSpendNum,
               orders,
 
               baseCostProfile: costProfile,
               config: (app as any).config ?? {},
-              baseOverrides: mergedOverrides, // ✅ important: merged persisted+request
+              baseOverrides: mergedOverrides,
 
-              cogsService: ctx.cogsService,
-              shopifyGET: ctx.shopify.get,
+              cogsService,
+              shopifyGET: shopifyClient.get,
               unitCostByVariant,
 
               opportunities: topOpps,
@@ -178,7 +205,7 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
 
         costModel: {
           fingerprint: costProfile.meta.fingerprint,
-          persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+          persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         },
       });
     } catch (err: any) {

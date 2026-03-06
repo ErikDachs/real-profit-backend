@@ -1,9 +1,13 @@
-// src/routes/shopify/dashboardOverview.route.ts
 import type { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 
 import { round2 } from "../../utils/money.js";
-import { parseDays, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
+import {
+  parseDays,
+  parseShop,
+  precomputeUnitCostsForOrders,
+  effectiveCostOverrides,
+} from "./helpers.js";
 
 // ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
@@ -68,38 +72,59 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
       const adSpend = round2(Number(q?.adSpend ?? 0) || 0);
       const currentRoas = Number(q?.currentRoas ?? 0) || 0;
 
-      // ---- Orders (raw from Shopify)
-      const raw = await ctx.fetchOrders(days);
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+
+      const raw = shop === ctx.shop
+        ? await ctx.fetchOrders(days)
+        : await ctx.fetchOrdersForShop(shop, days);
+
       const ordersRaw: any[] = Array.isArray(raw) ? raw : Array.isArray((raw as any)?.orders) ? (raw as any).orders : [];
 
+      const cogsOverridesStore = shop === ctx.shop
+        ? ctx.cogsOverridesStore
+        : await ctx.getCogsOverridesStoreForShop(shop);
+
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
       // ---- Cost Profile (SSOT)
-      const persisted = await readPersistedOverrides(ctx.costModelOverridesStore as any);
+      const persisted = await readPersistedOverrides(costModelOverridesStore as any);
       const persistedOverrides = (persisted as any)?.overrides as CostProfileOverrides | undefined;
       const overrides = effectiveCostOverrides({ persisted: persistedOverrides, input: q });
 
       const costProfile = resolveCostProfile({
-        config: (app as any).config,
+        config: (app as any).config ?? {},
         overrides,
       });
 
       // ---- Unit costs
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders: ordersRaw,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
       });
 
       // ---- SSOT summary (store-level)
       const summary = await buildOrdersSummary({
-        shop: ctx.shop,
+        shop,
         days,
         adSpend,
         orders: ordersRaw,
         costProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
         unitCostByVariant,
-        isIgnoredVariant: (variantId: number) => ctx.cogsOverridesStore.isIgnoredSync(variantId),
+        isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
       });
 
       // ---- Health
@@ -111,10 +136,10 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         const p = await calculateOrderProfit({
           order: o,
           costProfile,
-          cogsService: ctx.cogsService,
-          shopifyGET: ctx.shopify.get,
+          cogsService,
+          shopifyGET: shopifyClient.get,
           unitCostByVariant,
-          isIgnoredVariant: (variantId: number) => ctx.cogsOverridesStore.isIgnoredSync(variantId),
+          isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
         });
 
         orderProfitsBase.push({
@@ -183,18 +208,18 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         };
       });
 
-      // ---- Insights (Profit Killers produces SSOT unified opportunities internally)
+      // ---- Insights (ProfitKillers produces SSOT unified opportunities internally)
       const debug: any = { insightErrors: [] as string[] };
 
       let profitKillers: any = null;
       {
         const r = safeCall("profitKillers", () =>
           buildProfitKillersInsights({
-            shop: ctx.shop,
+            shop,
             days,
 
             orders: enriched,
-            products: [], // keep iterable; wire real products later
+            products: [],
             missingCogsCount: Number((summary as any)?.missingCogsCount ?? 0),
 
             adSpend,
@@ -222,7 +247,6 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         else debug.insightErrors.push(r.error);
       }
 
-      // Pull optional insights from ProfitKillers output (single source)
       const shippingSubsidy = pickInsight(profitKillers?.insights, "shippingSubsidy");
       const marginDrift = pickInsight(profitKillers?.insights, "marginDrift");
       const breakEvenRisk = pickInsight(profitKillers?.insights, "breakEvenRisk");
@@ -234,15 +258,13 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         breakEvenRisk,
       };
 
-      // ✅ Canonical opportunities (from ProfitKillers SSOT ranking)
       const opportunities = profitKillers?.opportunities ?? { top: [], all: [] };
 
-      // ✅ Decision system (ActionPlan MUST be built from UnifiedOpportunity[] — not summary/health/insights)
       const currency = pickCurrency(summary as any, "USD");
       const fingerprint = (costProfile as any)?.meta?.fingerprint ?? undefined;
 
       const actions = buildActionPlan({
-        shop: ctx.shop,
+        shop,
         days,
         currency,
         costModelFingerprint: fingerprint,
@@ -251,13 +273,12 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         inputs: {
           adSpend,
           currentRoas,
-          // optional debug context for determinism
           fixedCostsAllocatedInPeriod,
         },
       } as any);
 
       return reply.send({
-        shop: ctx.shop,
+        shop,
         meta: {
           currency: (summary as any)?.currency ?? null,
           periodDays: days,

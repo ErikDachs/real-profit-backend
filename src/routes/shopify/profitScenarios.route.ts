@@ -1,15 +1,13 @@
-// src/routes/shopify/profitScenarios.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { round2 } from "../../utils/money.js";
 import { buildOrdersSummary } from "../../domain/profit.js";
-import { parseDays } from "./helpers.js";
+import { parseDays, parseShop } from "./helpers.js";
 
 import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
 import { buildProfitScenarioResult } from "../../domain/simulations/profitScenarioSimulation.js";
 
 function mergeDeepShallow(a: any, b: any) {
-  // minimal deterministic merge for our overrides shape
   const out = { ...(a ?? {}) };
   for (const k of Object.keys(b ?? {})) {
     const av = (out as any)[k];
@@ -30,7 +28,6 @@ function scenarioToOverrides(params: { scenario: string; baseCostProfile: any })
   const feeFixedBase = Number(baseCostProfile?.payment?.feeFixed ?? 0);
   const shipCostPerOrderBase = Number(baseCostProfile?.shipping?.costPerOrder ?? 0);
 
-  // Deterministic, limited v1: only knobs that are SSOT in costProfile
   switch (scenario) {
     case "fees_-10":
       return { payment: { feePercent: feePercentBase * 0.9, feeFixed: feeFixedBase * 0.9 } };
@@ -71,9 +68,25 @@ export function registerProfitScenariosRoute(app: FastifyInstance, ctx: ShopifyC
         });
       }
 
-      const orders = await ctx.fetchOrders(daysNum);
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
 
-      // Precompute unit costs once (baseline + simulated share same unit costs)
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+
+      const orders = shop === ctx.shop
+        ? await ctx.fetchOrders(daysNum)
+        : await ctx.fetchOrdersForShop(shop, daysNum);
+
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
       const allVariantIds: number[] = [];
       for (const o of orders) {
         const lineItems = (o?.line_items ?? []) as any[];
@@ -82,18 +95,18 @@ export function registerProfitScenariosRoute(app: FastifyInstance, ctx: ShopifyC
           if (Number.isFinite(vId) && vId > 0) allVariantIds.push(vId);
         }
       }
-      const unitCostByVariant = await ctx.cogsService.computeUnitCostsByVariant(ctx.shopify.get, allVariantIds);
+      const unitCostByVariant = await cogsService.computeUnitCostsByVariant(shopifyClient.get, allVariantIds);
 
-// Baseline profile (config + persisted overrides + optional explicit overrides in query)
-// Order: persisted -> query (query wins)
-const persistedOverrides = ctx.costModelOverridesStore.getOverridesSync();
-const queryOverrides = costOverridesFromAny(q);
-const baseOverrides = mergeDeepShallow(persistedOverrides, queryOverrides);
+      await costModelOverridesStore.ensureLoaded();
+      const persistedOverrides = costModelOverridesStore.getOverridesSync();
+      const queryOverrides = costOverridesFromAny(q);
+      const baseOverrides = mergeDeepShallow(persistedOverrides, queryOverrides);
 
-const baselineProfile = resolveCostProfile({
-  config: (app as any).config ?? {},
-  overrides: baseOverrides,
-});
+      const baselineProfile = resolveCostProfile({
+        config: (app as any).config ?? {},
+        overrides: baseOverrides,
+      });
+
       const scenarioOverrides = scenarioToOverrides({
         scenario: scenarioKey,
         baseCostProfile: baselineProfile,
@@ -115,35 +128,37 @@ const baselineProfile = resolveCostProfile({
       });
 
       const baseline = await buildOrdersSummary({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         adSpend: adSpendNum,
         orders,
         costProfile: baselineProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
         unitCostByVariant,
       });
 
       const simulated = await buildOrdersSummary({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         adSpend: adSpendNum,
         orders,
         costProfile: simulatedProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
         unitCostByVariant,
       });
 
       const result = buildProfitScenarioResult({ baseline, simulated });
 
       return reply.send({
+        shop,
         scenario: scenarioKey,
         ...result,
         costModel: {
           baselineFingerprint: baselineProfile.meta.fingerprint,
           simulatedFingerprint: simulatedProfile.meta.fingerprint,
+          persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         },
       });
     } catch (err: any) {

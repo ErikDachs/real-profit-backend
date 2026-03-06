@@ -1,6 +1,6 @@
-// src/routes/shopify/actionsState.route.ts
 import type { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
+import { parseShop } from "./helpers.js";
 
 import type { ActionStatus } from "../../storage/actionPlanStateStore.js";
 
@@ -12,14 +12,24 @@ function normalizeStatus(x: any): ActionStatus {
 
 export function registerActionsStateRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
   // List all persisted states (UI hydration)
-  app.get("/api/actions/state", async (_req, reply) => {
+  app.get("/api/actions/state", async (req, reply) => {
     try {
-      await ctx.actionPlanStateStore.ensureLoaded();
-      const items = await ctx.actionPlanStateStore.list();
+      const q = req.query as any;
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const actionPlanStateStore = shop === ctx.shop
+        ? ctx.actionPlanStateStore
+        : await ctx.getActionPlanStateStoreForShop(shop);
+
+      await actionPlanStateStore.ensureLoaded();
+      const items = await actionPlanStateStore.list();
 
       return reply.send({
-        shop: ctx.shop,
-        updatedAt: ctx.actionPlanStateStore.getUpdatedAtSync(),
+        shop,
+        updatedAt: actionPlanStateStore.getUpdatedAtSync(),
         states: items,
       });
     } catch (err: any) {
@@ -31,6 +41,16 @@ export function registerActionsStateRoutes(app: FastifyInstance, ctx: ShopifyCtx
   // Upsert status/note/dueDate
   app.patch("/api/actions/state", async (req, reply) => {
     try {
+      const q = req.query as any;
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const actionPlanStateStore = shop === ctx.shop
+        ? ctx.actionPlanStateStore
+        : await ctx.getActionPlanStateStoreForShop(shop);
+
       const body = (req.body ?? {}) as any;
 
       const actionId = String(body?.actionId ?? "").trim();
@@ -42,7 +62,7 @@ export function registerActionsStateRoutes(app: FastifyInstance, ctx: ShopifyCtx
       const dismissedReason =
         body?.dismissedReason === undefined ? undefined : (body.dismissedReason === null ? null : String(body.dismissedReason));
 
-      const rec = await ctx.actionPlanStateStore.upsert({
+      const rec = await actionPlanStateStore.upsert({
         actionId,
         status,
         note,
@@ -50,7 +70,7 @@ export function registerActionsStateRoutes(app: FastifyInstance, ctx: ShopifyCtx
         dismissedReason,
       });
 
-      return reply.send({ ok: true, record: rec });
+      return reply.send({ ok: true, shop, record: rec });
     } catch (err: any) {
       const status = err?.status && Number.isFinite(err.status) ? err.status : 500;
       return reply.status(status).send({ error: "Unexpected error", details: String(err?.message ?? err) });

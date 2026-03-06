@@ -1,11 +1,17 @@
-// src/routes/shopify/actionsPlan.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 
 import { calculateOrderProfit, buildProductsProfit, allocateFixedCostsForOrders } from "../../domain/profit.js";
 import { buildDailyProfit } from "../../domain/profitDaily.js";
 
-import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
+import {
+  parseDays,
+  parseLimit,
+  parseAdInputs,
+  parseShop,
+  precomputeUnitCostsForOrders,
+  effectiveCostOverrides,
+} from "./helpers.js";
 
 import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation.js";
 import { buildProfitKillersInsights } from "../../domain/insights.js";
@@ -42,7 +48,6 @@ function buildActionId(params: {
   opportunityType: OpportunityType;
 }) {
   const key = `${params.shop}|${params.days}|${params.costModelFingerprint}|${params.opportunityType}|${params.actionCode}`;
-  // include a readable prefix for debugging
   return `act_${simpleHash(key)}`;
 }
 
@@ -55,9 +60,31 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
       const limitNum = parseLimit(q, 10);
       const { adSpend, currentRoas } = parseAdInputs(q);
 
-      // persisted overrides + request overrides (request wins)
-      await ctx.costModelOverridesStore.ensureLoaded();
-      const persisted = ctx.costModelOverridesStore.getOverridesSync();
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+
+      const orders = shop === ctx.shop
+        ? await ctx.fetchOrders(daysNum)
+        : await ctx.fetchOrdersForShop(shop, daysNum);
+
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
+      const actionPlanStateStore = shop === ctx.shop
+        ? ctx.actionPlanStateStore
+        : await ctx.getActionPlanStateStoreForShop(shop);
+
+      await costModelOverridesStore.ensureLoaded();
+      const persisted = costModelOverridesStore.getOverridesSync();
       const baseOverrides = effectiveCostOverrides({ persisted, input: q });
 
       const costProfile = resolveCostProfile({
@@ -65,12 +92,10 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         overrides: baseOverrides,
       });
 
-      const orders = await ctx.fetchOrders(daysNum);
-
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
       });
 
       // 1) Build per-order profits (SSOT)
@@ -79,8 +104,8 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         const p = await calculateOrderProfit({
           order: o,
           costProfile,
-          cogsService: ctx.cogsService,
-          shopifyGET: ctx.shopify.get,
+          cogsService,
+          shopifyGET: shopifyClient.get,
           unitCostByVariant,
         });
 
@@ -111,7 +136,7 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
 
       // 2) Daily totals (for shipping totals etc.)
       const dailyBase = buildDailyProfit({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orderProfits: orderProfits.map((x) => ({
           createdAt: x.createdAt,
@@ -132,12 +157,12 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
 
       // 3) Products (SSOT)
       const productResult = await buildProductsProfit({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orders,
         costProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
       });
 
       const productsRaw = (productResult?.products ?? []) as any[];
@@ -186,7 +211,7 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
 
       // 5) Profit killers engine
       const insights = buildProfitKillersInsights({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orders: ordersEnriched,
         products: productsEnriched,
@@ -218,7 +243,7 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
       const scenarioPack =
         unifiedTop.length > 0
           ? await runOpportunityScenarioSimulations({
-              shop: ctx.shop,
+              shop,
               days: daysNum,
               adSpend: adSpendNum,
               orders,
@@ -227,8 +252,8 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
               config: (app as any).config ?? {},
               baseOverrides,
 
-              cogsService: ctx.cogsService,
-              shopifyGET: ctx.shopify.get,
+              cogsService,
+              shopifyGET: shopifyClient.get,
               unitCostByVariant,
 
               opportunities: unifiedTop,
@@ -246,7 +271,7 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
       for (const [t, s] of scenarioByType.entries()) simulationByType.set(t, s);
 
       const deepDivePack = buildOpportunityDeepDive({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         currency,
         opportunities: unifiedAll,
@@ -258,7 +283,7 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
 
       // 8) Build Action Plan
       const plan = buildActionPlan({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         currency,
         unifiedOpportunities: unifiedAll,
@@ -273,19 +298,19 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         limit: limitNum,
       });
 
-      // ✅ 9) Merge persisted action states (status/notes)
-      await ctx.actionPlanStateStore.ensureLoaded();
+      // 9) Merge persisted action states
+      await actionPlanStateStore.ensureLoaded();
 
       const actionsWithState = (plan.actions ?? []).map((a: any) => {
         const actionId = buildActionId({
-          shop: ctx.shop,
+          shop,
           days: daysNum,
           costModelFingerprint: String(costProfile.meta.fingerprint || ""),
           actionCode: String(a.code || ""),
           opportunityType: String(a.opportunityType || "") as OpportunityType,
         });
 
-        const state = ctx.actionPlanStateStore.getStateSync(actionId);
+        const state = actionPlanStateStore.getStateSync(actionId);
 
         return {
           ...a,
@@ -301,7 +326,7 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
           ...(plan.meta ?? {}),
           costModel: {
             fingerprint: costProfile.meta.fingerprint,
-            persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+            persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
           },
           fixedCosts: {
             monthlyTotal,
@@ -310,11 +335,10 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
             daysInMonth,
           },
           actionState: {
-            persistedUpdatedAt: ctx.actionPlanStateStore.getUpdatedAtSync() ?? null,
+            persistedUpdatedAt: actionPlanStateStore.getUpdatedAtSync() ?? null,
           },
         },
 
-        // ADD THIS for testing / UI hookup
         opportunities: (insights as any)?.opportunities ?? null,
         insights: (insights as any)?.insights ?? null,
 

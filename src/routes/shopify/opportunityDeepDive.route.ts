@@ -1,11 +1,17 @@
-// src/routes/shopify/opportunityDeepDive.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 
 import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit.js";
 import { buildDailyProfit } from "../../domain/profitDaily.js";
 
-import { parseDays, parseLimit, parseAdInputs, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
+import {
+  parseDays,
+  parseLimit,
+  parseAdInputs,
+  parseShop,
+  precomputeUnitCostsForOrders,
+  effectiveCostOverrides,
+} from "./helpers.js";
 
 import { buildShippingSubsidyInsight } from "../../domain/insights/shippingSubsidy.js";
 import { buildUnifiedOpportunityRanking } from "../../domain/opportunities/unifiedOpportunityRanking.js";
@@ -28,9 +34,28 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
       const limitNum = parseLimit(q, 10);
       const { adSpend, currentRoas } = parseAdInputs(q);
 
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+
+      const orders = shop === ctx.shop
+        ? await ctx.fetchOrders(daysNum)
+        : await ctx.fetchOrdersForShop(shop, daysNum);
+
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
       // ✅ Persisted overrides + request overrides (request wins)
-      await ctx.costModelOverridesStore.ensureLoaded();
-      const persisted = ctx.costModelOverridesStore.getOverridesSync();
+      await costModelOverridesStore.ensureLoaded();
+      const persisted = costModelOverridesStore.getOverridesSync();
       const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
 
       // ✅ Resolve cost profile per request (config + merged overrides)
@@ -41,12 +66,10 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
 
       const type = (q?.type ? String(q.type) : undefined) as OpportunityType | undefined;
 
-      const orders = await ctx.fetchOrders(daysNum);
-
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
       });
 
       const orderProfits: any[] = [];
@@ -54,8 +77,8 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
         const p = await calculateOrderProfit({
           order: o,
           costProfile,
-          cogsService: ctx.cogsService,
-          shopifyGET: ctx.shopify.get,
+          cogsService,
+          shopifyGET: shopifyClient.get,
           unitCostByVariant,
         });
 
@@ -85,7 +108,7 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
       }
 
       const daily = buildDailyProfit({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orderProfits: orderProfits.map((x) => ({
           createdAt: x.createdAt,
@@ -105,12 +128,12 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
       });
 
       const productResult = await buildProductsProfit({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orders,
         costProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
       });
 
       const productsRaw = (productResult?.products ?? []) as any[];
@@ -185,7 +208,7 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
       for (const s of sim.top ?? []) simulationByType.set(s.type as OpportunityType, s);
 
       const deepDive = buildOpportunityDeepDive({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         currency,
         opportunities: unified.all,
@@ -203,7 +226,7 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
           currentRoas: currentRoas ?? null,
           costModel: {
             fingerprint: costProfile.meta.fingerprint,
-            persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+            persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
           },
         },
       });
