@@ -17,89 +17,85 @@ const fakeOrders = [
   },
 ];
 
+const costModelOverridesStore = {
+  ensureLoaded: async () => {},
+  getOverridesSync: () => undefined,
+  getUpdatedAtSync: () => undefined,
+  setOverrides: async (_overrides: any) => {},
+  clear: async () => {},
+} as any;
+
+const actionPlanStateStore = {
+  ensureLoaded: async () => {},
+  getUpdatedAtSync: () => null,
+  getStateSync: (_actionId: string) => null,
+  list: async () => [],
+  upsert: async ({ actionId, status, note, dueDate, dismissedReason }: any) => ({
+    actionId,
+    status: status ?? "OPEN",
+    note: note ?? null,
+    dueDate: dueDate ?? null,
+    dismissedReason: dismissedReason ?? null,
+    updatedAt: new Date().toISOString(),
+  }),
+  clear: async (_actionId: string) => {},
+  clearAll: async () => {},
+} as any;
+
+const cogsOverridesStore = {
+  ensureLoaded: async () => {},
+  list: async () => [],
+  upsert: async ({ variantId, unitCost, ignoreCogs }: any) => ({
+    variantId,
+    unitCost: unitCost ?? null,
+    ignoreCogs: !!ignoreCogs,
+  }),
+  isIgnoredSync: (_variantId: number) => false,
+  getUnitCostSync: (_variantId: number) => undefined,
+} as any;
+
+const cogsService = {
+  computeUnitCostsByVariant: async (_shopifyGET: any, variantIds: number[]) => {
+    const m = new Map<number, number>();
+    for (const id of variantIds) m.set(id, 10);
+    return m;
+  },
+  computeCogsByVariant: async () => new Map(),
+  computeCogsForVariants: async () => 0,
+  isIgnoredVariantSync: (_variantId: number) => false,
+} as any;
+
 // ---- fake ctx (real domain, no domain mocks)
 const fakeCtx: ShopifyCtx = {
   shop: "test-shop.myshopify.com",
 
-  // shopify client factory is now per-shop in ctx, but some code may still use ctx.shopify directly
   shopify: { get: async (_path: string) => ({}) } as any,
 
-  // ✅ NEW: shopsStore required by ShopifyCtx
   shopsStore: {
     ensureLoaded: async () => {},
-    getByShopDomainSync: (_shopDomain: string) => ({
-      shopDomain: "test-shop.myshopify.com",
-      accessToken: "test_token",
-      installedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    upsert: async (_row: any) => {},
-    deleteByShopDomain: async (_shopDomain: string) => {},
+    getAccessTokenOrThrow: async (_shop: string) => "test_token",
   } as any,
 
-  // ✅ NEW: createShopifyForShop required by ShopifyCtx
   createShopifyForShop: async (_shopDomain: string) => {
     return { get: async (_path: string) => ({}) } as any;
   },
-  // ✅ NEW: per-shop getters required by ShopifyCtx
-  getCogsOverridesStoreForShop: async (_shopDomain: string) => fakeCtx.cogsOverridesStore,
-  getCogsServiceForShop: async (_shopDomain: string) => fakeCtx.cogsService,
-  cogsOverridesStore: {
-    ensureLoaded: async () => {},
-    list: async () => [],
-    upsert: async ({ variantId, unitCost, ignoreCogs }: any) => ({
-      variantId,
-      unitCost: unitCost ?? null,
-      ignoreCogs: !!ignoreCogs,
-    }),
-    isIgnoredSync: (_variantId: number) => false,
-    getUnitCostSync: (_variantId: number) => undefined,
-  } as any,
 
-  cogsService: {
-    computeUnitCostsByVariant: async (_shopifyGET: any, variantIds: number[]) => {
-      const m = new Map<number, number>();
-      for (const id of variantIds) m.set(id, 10); // unit cost = 10
-      return m;
-    },
-    computeCogsByVariant: async () => new Map(),
-    computeCogsForVariants: async () => 0,
-    isIgnoredVariantSync: (_variantId: number) => false,
-  } as any,
-
-  costModelOverridesStore: {
-    ensureLoaded: async () => {},
-    getOverridesSync: () => undefined,
-    getUpdatedAtSync: () => undefined,
-    setOverrides: async (_overrides: any) => {},
-    clear: async () => {},
-  } as any,
-
-  actionPlanStateStore: {
-    ensureLoaded: async () => {},
-    getUpdatedAtSync: () => null,
-    getStateSync: (_actionId: string) => null,
-    list: async () => [],
-    upsert: async ({ actionId, status, note, dueDate, dismissedReason }: any) => ({
-      actionId,
-      status: status ?? "OPEN",
-      note: note ?? null,
-      dueDate: dueDate ?? null,
-      dismissedReason: dismissedReason ?? null,
-      updatedAt: new Date().toISOString(),
-    }),
-    clear: async (_actionId: string) => {},
-  } as any,
-
-  // ✅ NEW: fetchOrdersForShop / fetchOrderByIdForShop required by ShopifyCtx
   fetchOrdersForShop: async (_shop: string, _days: number) => fakeOrders,
-fetchOrderByIdForShop: async (_shop: string, _orderId: string) => fakeOrders[0],
+  fetchOrderByIdForShop: async (_shop: string, _orderId: string) => fakeOrders[0],
 
-  // (optional legacy aliases — harmless, but can help if some code still calls old names)
+  getCogsOverridesStoreForShop: async (_shopDomain: string) => cogsOverridesStore,
+  getCogsServiceForShop: async (_shopDomain: string) => cogsService,
+  getCostModelOverridesStoreForShop: async (_shopDomain: string) => costModelOverridesStore,
+  getActionPlanStateStoreForShop: async (_shopDomain: string) => actionPlanStateStore,
+
+  cogsOverridesStore,
+  cogsService,
+  costModelOverridesStore,
+  actionPlanStateStore,
+
   fetchOrders: async (_days: number) => fakeOrders as any,
   fetchOrderById: async (_orderId: string) => fakeOrders[0] as any,
 
-  // (may exist in ctx type)
   costProfile: {
     payment: { feePercent: 0.029, feeFixed: 0.3 },
     shipping: { costPerOrder: 5 },
@@ -142,7 +138,6 @@ describe("SSOT integration (routes)", () => {
     expect(row).toHaveProperty("profitAfterFixedCosts");
     expect(row).toHaveProperty("operatingProfit");
 
-    // SSOT invariants
     expect(row.operatingProfit).toBe(row.profitAfterFixedCosts);
   });
 

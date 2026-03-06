@@ -7,13 +7,55 @@ function mkErr(status: number, message = "boom") {
   return e;
 }
 
+const costModelOverridesStore = {
+  ensureLoaded: async () => {},
+  getOverridesSync: () => undefined,
+  getUpdatedAtSync: () => undefined,
+  setOverrides: async (_overrides: any) => {},
+  clear: async () => {},
+} as any;
+
+const actionPlanStateStore = {
+  ensureLoaded: async () => {},
+  getUpdatedAtSync: () => null,
+  getStateSync: (_actionId: string) => null,
+  list: async () => [],
+  upsert: async ({ actionId, status, note, dueDate, dismissedReason }: any) => ({
+    actionId,
+    status: status ?? "OPEN",
+    note: note ?? null,
+    dueDate: dueDate ?? null,
+    dismissedReason: dismissedReason ?? null,
+    updatedAt: new Date().toISOString(),
+  }),
+  clear: async (_actionId: string) => {},
+  clearAll: async () => {},
+} as any;
+
+const cogsOverridesStore = {
+  ensureLoaded: async () => {},
+  list: async () => [],
+  upsert: async ({ variantId, unitCost, ignoreCogs }: any) => ({
+    variantId,
+    unitCost: unitCost ?? null,
+    ignoreCogs: !!ignoreCogs,
+  }),
+  isIgnoredSync: () => false,
+  getUnitCostSync: () => undefined,
+} as any;
+
+const cogsService = {
+  computeUnitCostsByVariant: async () => new Map(),
+  computeCogsByVariant: async () => new Map(),
+  computeCogsForVariants: async () => 0,
+} as any;
+
 const baseCtx: ShopifyCtx = {
   shop: "test-shop.myshopify.com",
   shopify: {
     get: async () => ({}),
   } as any,
 
-  // ✅ NEW required fields (multi-shop / OAuth world)
   shopsStore: {
     ensureLoaded: async () => {},
     getAccessTokenOrThrow: async (_shop: string) => "test_token",
@@ -23,47 +65,20 @@ const baseCtx: ShopifyCtx = {
     ({
       get: async () => ({}),
     } as any),
-  // ✅ NEW: per-shop getters required by ShopifyCtx
-  getCogsOverridesStoreForShop: async (_shop: string) => baseCtx.cogsOverridesStore,
-  getCogsServiceForShop: async (_shop: string) => baseCtx.cogsService,
+
   fetchOrdersForShop: async (_shop: string, _days: number) => [],
   fetchOrderByIdForShop: async (_shop: string, _orderId: string) => ({}),
 
-  actionPlanStateStore: {
-    ensureLoaded: async () => {},
-    getAll: async () => [],
-    getByCode: async (_code: string) => null,
-    upsert: async (_item: any) => {},
-    clear: async () => {},
-  } as any,
+  getCogsOverridesStoreForShop: async (_shop: string) => cogsOverridesStore,
+  getCogsServiceForShop: async (_shop: string) => cogsService,
+  getCostModelOverridesStoreForShop: async (_shop: string) => costModelOverridesStore,
+  getActionPlanStateStoreForShop: async (_shop: string) => actionPlanStateStore,
 
-  cogsOverridesStore: {
-    ensureLoaded: async () => {},
-    list: async () => [],
-    upsert: async ({ variantId, unitCost, ignoreCogs }: any) => ({
-      variantId,
-      unitCost: unitCost ?? null,
-      ignoreCogs: !!ignoreCogs,
-    }),
-    isIgnoredSync: () => false,
-    getUnitCostSync: () => undefined,
-  } as any,
+  cogsOverridesStore,
+  cogsService,
+  costModelOverridesStore,
+  actionPlanStateStore,
 
-  cogsService: {
-    computeUnitCostsByVariant: async () => new Map(),
-    computeCogsByVariant: async () => new Map(),
-    computeCogsForVariants: async () => 0,
-  } as any,
-
-  costModelOverridesStore: {
-    ensureLoaded: async () => {},
-    getOverridesSync: () => undefined,
-    getUpdatedAtSync: () => undefined,
-    setOverrides: async (_overrides: any) => {},
-    clear: async () => {},
-  } as any,
-
-  // legacy single-shop helpers (still used by current routes)
   fetchOrders: async () => [],
   fetchOrderById: async (_orderId: string) => ({}),
 
@@ -71,6 +86,8 @@ const baseCtx: ShopifyCtx = {
     payment: { feePercent: 0.029, feeFixed: 0.3 },
     shipping: { costPerOrder: 5 },
     ads: { allocationMode: "BY_NET_SALES" },
+    fixedCosts: { allocationMode: "PER_ORDER", daysInMonth: 30, monthlyItems: [] },
+    derived: { fixedCostsMonthlyTotal: 0 },
     flags: { includeShippingCost: true },
   } as any,
 };
@@ -83,13 +100,94 @@ vi.mock("../shopify/ctx", () => {
 
 // minimal mocks so routes can run without doing real work
 vi.mock("../../domain/profit", () => ({
-  buildOrdersSummary: async () => ({ shop: baseCtx.shop, days: 30, count: 0, grossSales: 0, refunds: 0, netAfterRefunds: 0, cogs: 0, paymentFees: 0, contributionMargin: 0, contributionMarginPct: 0, adSpendBreakEven: 0, breakEvenRoas: null, profitAfterFees: 0, profitMarginAfterFeesPct: 0, adSpend: 0, profitAfterAds: 0, profitMarginAfterAdsPct: 0, targetRoasFor10PctProfit: null, targetRoasFor10PctProfitAfterShipping: null }),
-  buildProductsProfit: async () => ({ shop: baseCtx.shop, days: 30, orderCount: 0, totals: { totalNetSales: 0, paymentFeesTotal: 0, uniqueVariants: 0 }, highlights: { topWinners: [], topLosers: [], missingCogsCount: 0, missingCogs: [] }, products: [] }),
-  calculateOrderProfit: async () => ({ orderId: "x", grossSales: 0, refunds: 0, netAfterRefunds: 0, cogs: 0, paymentFees: 0, contributionMargin: 0, contributionMarginPct: 0, shippingRevenue: 0, shippingCost: 0, shippingImpact: 0, profitAfterShipping: 0, profitMarginAfterShippingPct: 0, adSpendBreakEven: 0, breakEvenRoas: null, profitAfterFees: 0, marginAfterFeesPct: 0 }),
+  buildOrdersSummary: async () => ({
+    shop: baseCtx.shop,
+    days: 30,
+    count: 0,
+    grossSales: 0,
+    refunds: 0,
+    netAfterRefunds: 0,
+    cogs: 0,
+    paymentFees: 0,
+    contributionMargin: 0,
+    contributionMarginPct: 0,
+    adSpendBreakEven: 0,
+    breakEvenRoas: null,
+    profitAfterFees: 0,
+    profitMarginAfterFeesPct: 0,
+    adSpend: 0,
+    profitAfterAds: 0,
+    profitMarginAfterAdsPct: 0,
+    targetRoasFor10PctProfit: null,
+    targetRoasFor10PctProfitAfterShipping: null,
+    fixedCostsAllocatedInPeriod: 0,
+    missingCogsCount: 0,
+    shippingRevenue: 0,
+    shippingCost: 0,
+  }),
+  buildProductsProfit: async () => ({
+    shop: baseCtx.shop,
+    days: 30,
+    orderCount: 0,
+    totals: { totalNetSales: 0, paymentFeesTotal: 0, uniqueVariants: 0 },
+    highlights: { topWinners: [], topLosers: [], missingCogsCount: 0, missingCogs: [] },
+    products: [],
+  }),
+  calculateOrderProfit: async () => ({
+    orderId: "x",
+    grossSales: 0,
+    refunds: 0,
+    netAfterRefunds: 0,
+    cogs: 0,
+    paymentFees: 0,
+    contributionMargin: 0,
+    contributionMarginPct: 0,
+    shippingRevenue: 0,
+    shippingCost: 0,
+    shippingImpact: 0,
+    profitAfterShipping: 0,
+    profitMarginAfterShippingPct: 0,
+    adSpendBreakEven: 0,
+    breakEvenRoas: null,
+    profitAfterFees: 0,
+    marginAfterFeesPct: 0,
+    isGiftCardOnlyOrder: false,
+    giftCardNetSalesExcluded: 0,
+    hasMissingCogs: false,
+    missingCogsVariantIds: [],
+  }),
+  allocateFixedCostsForOrders: ({ rows }: any) => (rows ?? []).map((r: any) => ({ ...r, fixedCostAllocated: 0 })),
 }));
 
 vi.mock("../../domain/profitDaily", () => ({
-  buildDailyProfit: () => ({ shop: baseCtx.shop, days: 30, totals: { orders: 0, grossSales: 0, refunds: 0, netAfterRefunds: 0, shippingRevenue: 0, shippingCost: 0, shippingImpact: 0, cogs: 0, paymentFees: 0, contributionMargin: 0, contributionMarginPct: 0, adSpendBreakEven: 0, breakEvenRoas: null, profitAfterShipping: 0, profitMarginAfterShippingPct: 0, allocatedAdSpend: 0, profitAfterAds: 0, profitMarginAfterAdsPct: 0, profitAfterAdsAndShipping: 0, profitMarginAfterAdsAndShippingPct: 0, profitAfterFees: 0 }, daily: [] }),
+  buildDailyProfit: ({ shop, days }: any) => ({
+    shop: shop ?? baseCtx.shop,
+    days: days ?? 30,
+    totals: {
+      orders: 0,
+      grossSales: 0,
+      refunds: 0,
+      netAfterRefunds: 0,
+      shippingRevenue: 0,
+      shippingCost: 0,
+      shippingImpact: 0,
+      cogs: 0,
+      paymentFees: 0,
+      contributionMargin: 0,
+      contributionMarginPct: 0,
+      adSpendBreakEven: 0,
+      breakEvenRoas: null,
+      profitAfterShipping: 0,
+      profitMarginAfterShippingPct: 0,
+      allocatedAdSpend: 0,
+      profitAfterAds: 0,
+      profitMarginAfterAdsPct: 0,
+      profitAfterAdsAndShipping: 0,
+      profitMarginAfterAdsAndShippingPct: 0,
+      profitAfterFees: 0,
+    },
+    daily: [],
+  }),
 }));
 
 vi.mock("../../domain/health/profitHealth", () => ({
@@ -118,11 +216,43 @@ vi.mock("../../domain/health/profitHealth", () => ({
 }));
 
 vi.mock("../../domain/insights", () => ({
-  buildProfitKillersInsights: () => ({ shop: baseCtx.shop, days: 30, meta: { currency: "EUR", periodDays: 30, periodLabel: "Last 30 days" }, totals: { currency: "EUR", orders: 0, grossSales: 0, refunds: 0, netAfterRefunds: 0, cogs: 0, paymentFees: 0, contributionMargin: 0, contributionMarginPct: 0, adSpendBreakEven: 0, breakEvenRoas: null }, highlights: { missingCogsCount: 0 }, insights: [], opportunities: { all: [], top: [] }, adIntelligence: null, profitKillers: { worstOrders: [], bestOrders: [], worstProducts: [], bestProducts: [] }, unifiedOpportunitiesTop5: [], unifiedOpportunitiesAll: [], impactSimulation: [], actions: [] }),
+  buildProfitKillersInsights: () => ({
+    shop: baseCtx.shop,
+    days: 30,
+    meta: { currency: "EUR", periodDays: 30, periodLabel: "Last 30 days" },
+    totals: {
+      currency: "EUR",
+      orders: 0,
+      grossSales: 0,
+      refunds: 0,
+      netAfterRefunds: 0,
+      cogs: 0,
+      paymentFees: 0,
+      contributionMargin: 0,
+      contributionMarginPct: 0,
+      adSpendBreakEven: 0,
+      breakEvenRoas: null,
+    },
+    highlights: { missingCogsCount: 0 },
+    insights: [],
+    opportunities: { all: [], top: [] },
+    adIntelligence: null,
+    profitKillers: { worstOrders: [], bestOrders: [], worstProducts: [], bestProducts: [] },
+    unifiedOpportunitiesTop5: [],
+    unifiedOpportunitiesAll: [],
+    impactSimulation: [],
+    actions: [],
+  }),
 }));
 
 vi.mock("../../domain/opportunities/deepDive", () => ({
-  buildOpportunityDeepDive: () => ({ shop: baseCtx.shop, days: 30, currency: "EUR", type: null, top: [], drivers: [] }),
+  buildOpportunityDeepDive: () => ({
+    shop: baseCtx.shop,
+    days: 30,
+    currency: "EUR",
+    deepDives: [],
+    meta: {},
+  }),
 }));
 
 import { buildApp } from "../../app.js";

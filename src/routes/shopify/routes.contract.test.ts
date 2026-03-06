@@ -18,70 +18,78 @@ const fakeOrders = [
   },
 ];
 
+const costModelOverridesStore = {
+  ensureLoaded: async () => {},
+  getOverridesSync: () => undefined,
+  getUpdatedAtSync: () => undefined,
+  setOverrides: async (_overrides: any) => {},
+  clear: async () => {},
+} as any;
+
+const actionPlanStateStore = {
+  ensureLoaded: async () => {},
+  getUpdatedAtSync: () => null,
+  getStateSync: (_actionId: string) => null,
+  list: async () => [],
+  upsert: async ({ actionId, status, note, dueDate, dismissedReason }: any) => ({
+    actionId,
+    status: status ?? "OPEN",
+    note: note ?? null,
+    dueDate: dueDate ?? null,
+    dismissedReason: dismissedReason ?? null,
+    updatedAt: new Date().toISOString(),
+  }),
+  clear: async (_actionId: string) => {},
+  clearAll: async () => {},
+} as any;
+
+const cogsOverridesStore = {
+  ensureLoaded: async () => {},
+  list: async () => [],
+  upsert: async ({ variantId, unitCost, ignoreCogs }: any) => ({
+    variantId,
+    unitCost: unitCost ?? null,
+    ignoreCogs: !!ignoreCogs,
+  }),
+  isIgnoredSync: (_variantId: number) => false,
+  getUnitCostSync: (_variantId: number) => undefined,
+} as any;
+
+const cogsService = {
+  computeUnitCostsByVariant: async (_shopifyGET: any, variantIds: number[]) => {
+    const m = new Map<number, number>();
+    for (const id of variantIds) m.set(id, 10);
+    return m;
+  },
+  computeCogsByVariant: async () => new Map(),
+  computeCogsForVariants: async () => 0,
+} as any;
+
 const fakeCtx: ShopifyCtx = {
   shop: "test-shop.myshopify.com",
 
   // legacy single-shop client used by existing routes
   shopify: { get: async (_path: string) => ({}) } as any,
 
-  // ✅ new multi-shop helpers required by ShopifyCtx type
+  // multi-shop helpers
   shopsStore: {
     ensureLoaded: async () => {},
     getAccessTokenOrThrow: async (_shop: string) => "test_token",
   } as any,
 
   createShopifyForShop: async (_shop: string) => ({ get: async (_path: string) => ({}) } as any),
-    // ✅ NEW: per-shop getters required by ShopifyCtx
-  getCogsOverridesStoreForShop: async (_shopDomain: string) => fakeCtx.cogsOverridesStore,
-  getCogsServiceForShop: async (_shopDomain: string) => fakeCtx.cogsService,
   fetchOrdersForShop: async (_shop: string, _days: number) => fakeOrders,
   fetchOrderByIdForShop: async (_shop: string, _orderId: string) => fakeOrders[0],
 
-  cogsOverridesStore: {
-    ensureLoaded: async () => {},
-    list: async () => [],
-    upsert: async ({ variantId, unitCost, ignoreCogs }: any) => ({
-      variantId,
-      unitCost: unitCost ?? null,
-      ignoreCogs: !!ignoreCogs,
-    }),
-    isIgnoredSync: (_variantId: number) => false,
-    getUnitCostSync: (_variantId: number) => undefined,
-  } as any,
+  getCogsOverridesStoreForShop: async (_shopDomain: string) => cogsOverridesStore,
+  getCogsServiceForShop: async (_shopDomain: string) => cogsService,
+  getCostModelOverridesStoreForShop: async (_shopDomain: string) => costModelOverridesStore,
+  getActionPlanStateStoreForShop: async (_shopDomain: string) => actionPlanStateStore,
 
-  cogsService: {
-    computeUnitCostsByVariant: async (_shopifyGET: any, variantIds: number[]) => {
-      const m = new Map<number, number>();
-      for (const id of variantIds) m.set(id, 10);
-      return m;
-    },
-    computeCogsByVariant: async () => new Map(),
-    computeCogsForVariants: async () => 0,
-  } as any,
-
-  costModelOverridesStore: {
-    ensureLoaded: async () => {},
-    getOverridesSync: () => undefined,
-    getUpdatedAtSync: () => undefined,
-    setOverrides: async (_overrides: any) => {},
-    clear: async () => {},
-  } as any,
-
-  actionPlanStateStore: {
-    ensureLoaded: async () => {},
-    getUpdatedAtSync: () => null,
-    getStateSync: (_actionId: string) => null,
-    list: async () => [],
-    upsert: async ({ actionId, status, note, dueDate, dismissedReason }: any) => ({
-      actionId,
-      status: status ?? "OPEN",
-      note: note ?? null,
-      dueDate: dueDate ?? null,
-      dismissedReason: dismissedReason ?? null,
-      updatedAt: new Date().toISOString(),
-    }),
-    clear: async (_actionId: string) => {},
-  } as any,
+  cogsOverridesStore,
+  cogsService,
+  costModelOverridesStore,
+  actionPlanStateStore,
 
   // legacy methods used by existing routes
   fetchOrders: async (_days: number) => fakeOrders,
@@ -91,6 +99,8 @@ const fakeCtx: ShopifyCtx = {
     payment: { feePercent: 0.029, feeFixed: 0.3 },
     shipping: { costPerOrder: 5 },
     ads: { allocationMode: "BY_NET_SALES" },
+    fixedCosts: { allocationMode: "PER_ORDER", daysInMonth: 30, monthlyItems: [] },
+    derived: { fixedCostsMonthlyTotal: 0 },
     flags: { includeShippingCost: true },
   } as any,
 };
@@ -133,6 +143,8 @@ vi.mock("../../domain/profit", () => {
       profitMarginAfterAdsAndShippingPct: 81.8,
       targetRoasFor10PctProfit: 1.3,
       targetRoasFor10PctProfitAfterShipping: 1.35,
+      fixedCostsAllocatedInPeriod: 0,
+      missingCogsCount: 0,
     }),
     buildProductsProfit: async () => ({
       shop: fakeCtx.shop,
@@ -185,18 +197,22 @@ vi.mock("../../domain/profit", () => {
       breakEvenRoas: 1.15,
       profitAfterFees: 86.8,
       marginAfterFeesPct: 86.8,
+      hasMissingCogs: false,
+      missingCogsVariantIds: [],
+      isGiftCardOnlyOrder: false,
+      giftCardNetSalesExcluded: 0,
     }),
     allocateFixedCostsForOrders: ({ rows }: any) => {
-  return (rows ?? []).map((r: any) => ({ ...r, fixedCostAllocated: 0 }));
-},
+      return (rows ?? []).map((r: any) => ({ ...r, fixedCostAllocated: 0 }));
+    },
   };
 });
 
 vi.mock("../../domain/profitDaily", () => {
   return {
-    buildDailyProfit: () => ({
-      shop: fakeCtx.shop,
-      days: 30,
+    buildDailyProfit: ({ shop, days }: any) => ({
+      shop: shop ?? fakeCtx.shop,
+      days: days ?? 30,
       totals: {
         orders: 1,
         grossSales: 100,
@@ -288,13 +304,12 @@ vi.mock("../../domain/opportunities/deepDive", () => {
       shop: fakeCtx.shop,
       days: 30,
       currency: "EUR",
-      deepDives: [], // ✅ WICHTIG: actionsPlan.route.ts erwartet deepDivePack.deepDives
+      deepDives: [],
       meta: {},
     }),
   };
 });
 
-// health calc is not critical to contracts; keep real or mock (mocking keeps tests stable)
 vi.mock("../../domain/health/profitHealth", () => {
   return {
     computeProfitHealthFromSummary: () => ({
