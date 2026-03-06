@@ -1,12 +1,15 @@
-// src/routes/shopify/productsProfit.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { round2 } from "../../utils/money.js";
 import { buildProductsProfit } from "../../domain/profit.js";
-import { parseDays } from "./helpers.js";
+import {
+  parseDays,
+  parseShop,
+  effectiveCostOverrides,
+} from "./helpers.js";
 
 // ✅ SSOT Cost Model Engine
-import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
+import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
 export function registerProductsProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/orders/products/profit", async (req, reply) => {
@@ -15,21 +18,38 @@ export function registerProductsProfitRoute(app: FastifyInstance, ctx: ShopifyCt
       const daysNum = parseDays(q, 30);
       const adSpendNum = round2(Number(q?.adSpend ?? 0) || 0);
 
-      // ✅ Resolve cost profile per request (config + optional overrides)
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
+
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const orders = shop === ctx.shop ? await ctx.fetchOrders(daysNum) : await ctx.fetchOrdersForShop(shop, daysNum);
+
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
+      await costModelOverridesStore.ensureLoaded();
+      const persisted = costModelOverridesStore.getOverridesSync();
+      const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
+
       const costProfile = resolveCostProfile({
         config: (app as any).config ?? {},
-        overrides: costOverridesFromAny(q),
+        overrides: mergedOverrides,
       });
 
-      const orders = await ctx.fetchOrders(daysNum);
-
       const result = await buildProductsProfit({
-        shop: ctx.shop,
+        shop,
         days: daysNum,
         orders,
         costProfile,
-        cogsService: ctx.cogsService,
-        shopifyGET: ctx.shopify.get,
+        cogsService,
+        shopifyGET: shopifyClient.get,
         adSpend: adSpendNum > 0 ? adSpendNum : undefined,
       });
 
@@ -37,11 +57,15 @@ export function registerProductsProfitRoute(app: FastifyInstance, ctx: ShopifyCt
         ...result,
         costModel: {
           fingerprint: costProfile.meta.fingerprint,
+          persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         },
       });
     } catch (err: any) {
       const status = err?.status && Number.isFinite(err.status) ? err.status : 500;
-      return reply.status(status).send({ error: "Unexpected error", details: String(err?.message ?? err) });
+      return reply.status(status).send({
+        error: "Unexpected error",
+        details: String(err?.message ?? err),
+      });
     }
   });
 }

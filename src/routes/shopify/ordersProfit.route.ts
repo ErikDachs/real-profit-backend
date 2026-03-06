@@ -1,22 +1,24 @@
-// src/routes/shopify/ordersProfit.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { round2 } from "../../utils/money.js";
 import { calculateOrderProfit, allocateFixedCostsForOrders } from "../../domain/profit.js";
 import { allocateAdSpendForOrders, computeProfitAfterAds } from "../../domain/profit/ads.js";
-import { parseDays, precomputeUnitCostsForOrders, effectiveCostOverrides } from "./helpers.js";
+import {
+  parseDays,
+  parseShop,
+  precomputeUnitCostsForOrders,
+  effectiveCostOverrides,
+} from "./helpers.js";
 
 // ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
 type OrderProfitRow = {
   id: number | string;
-
   name: string | null;
   createdAt: string | null;
   currency: string | null;
 
-  // from calculateOrderProfit()
   orderId: string;
 
   isGiftCardOnlyOrder: boolean;
@@ -48,7 +50,6 @@ type OrderProfitRow = {
   profitAfterFees: number;
   marginAfterFeesPct: number;
 
-  // computed in route
   allocatedAdSpend?: number;
   profitAfterAds?: number;
   profitAfterAdsAndShipping?: number;
@@ -56,7 +57,6 @@ type OrderProfitRow = {
   fixedCostAllocated?: number;
   profitAfterFixedCosts?: number;
 
-  // ✅ SSOT alias expected by tests
   operatingProfit?: number;
 };
 
@@ -68,23 +68,30 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
       const daysNum = parseDays(q, 30);
       const adSpendNum = round2(Number(q?.adSpend ?? 0) || 0);
 
-      // ✅ Determine shop context
-      const shopFromQuery = String(q?.shop ?? "").trim().toLowerCase();
-      const shop = shopFromQuery || ctx.shop; // legacy fallback if configured
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
 
-      // ✅ Select the correct Shopify client + order fetcher
-      const shopifyClient = shopFromQuery ? await ctx.createShopifyForShop(shopFromQuery) : ctx.shopify;
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const orders = shop === ctx.shop ? await ctx.fetchOrders(daysNum) : await ctx.fetchOrdersForShop(shop, daysNum);
 
-      const orders = shopFromQuery
-        ? await ctx.fetchOrdersForShop(shopFromQuery, daysNum)
-        : await ctx.fetchOrders(daysNum);
+      const cogsOverridesStore = shop === ctx.shop
+        ? ctx.cogsOverridesStore
+        : await ctx.getCogsOverridesStoreForShop(shop);
 
-      // ✅ persisted overrides + request overrides (request wins) — SSOT helper
-      await ctx.costModelOverridesStore.ensureLoaded();
-      const persisted = ctx.costModelOverridesStore.getOverridesSync();
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
+      await costModelOverridesStore.ensureLoaded();
+      const persisted = costModelOverridesStore.getOverridesSync();
       const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
 
-      // ✅ Resolve cost profile per request (config + merged overrides)
       const costProfile = resolveCostProfile({
         config: (app as any).config ?? {},
         overrides: mergedOverrides,
@@ -92,7 +99,7 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
 
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders,
-        cogsService: ctx.cogsService,
+        cogsService,
         shopifyGET: shopifyClient.get,
       });
 
@@ -101,36 +108,28 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
         const p = await calculateOrderProfit({
           order: o,
           costProfile,
-          cogsService: ctx.cogsService,
+          cogsService,
           shopifyGET: shopifyClient.get,
           unitCostByVariant,
-          isIgnoredVariant: (variantId: number) => ctx.cogsOverridesStore.isIgnoredSync(variantId),
+          isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
         });
 
         orderProfits.push({
           id: o.id,
-
           name: o.name ?? null,
           createdAt: o.created_at ?? null,
           currency: o.currency ?? null,
-
           ...(p as any),
         } as OrderProfitRow);
       }
 
-      // Helper: operational vs gift-card-only
       const isOperational = (o: OrderProfitRow) => !o.isGiftCardOnlyOrder;
       const operationalRows = orderProfits.filter(isOperational);
 
-      // -------------------------
-      // Ads allocation (optional)
-      // -------------------------
       let enriched: OrderProfitRow[] = orderProfits;
 
       if (adSpendNum > 0) {
         const adMode = costProfile.ads.allocationMode ?? "BY_NET_SALES";
-
-        // ✅ PER_ORDER: exclude gift-card-only orders, otherwise they would get ad spend even though operational net=0
         const rowsForAds: OrderProfitRow[] = adMode === "PER_ORDER" ? operationalRows : orderProfits;
 
         const adsAllocated = allocateAdSpendForOrders({
@@ -159,7 +158,6 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
         });
 
         if (adMode === "PER_ORDER") {
-          // Merge back: gift-card-only rows get 0 ad spend deterministically
           const byId = new Map<any, OrderProfitRow>(adsAllocated.map((x) => [x.id, x]));
 
           enriched = orderProfits.map((o) => {
@@ -185,12 +183,11 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
         }));
       }
 
-      // -------------------------
-      // ✅ Fixed costs allocation (SSOT)
-      // -------------------------
       const daysInMonth = Math.max(1, Number(costProfile.fixedCosts?.daysInMonth ?? 30));
       const monthlyTotal = round2(Number(costProfile.derived?.fixedCostsMonthlyTotal ?? 0));
-      const fixedCostsAllocatedInPeriod = round2(monthlyTotal * (Math.max(1, Number(daysNum || 0)) / daysInMonth));
+      const fixedCostsAllocatedInPeriod = round2(
+        monthlyTotal * (Math.max(1, Number(daysNum || 0)) / daysInMonth)
+      );
 
       const fixedAllocMode =
         (costProfile.fixedCosts?.allocationMode ?? "PER_ORDER") as "PER_ORDER" | "BY_NET_SALES" | "BY_DAYS";
@@ -203,11 +200,10 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
             ...o,
             fixedCostAllocated,
             profitAfterFixedCosts,
-            operatingProfit: profitAfterFixedCosts, // ✅ SSOT alias
+            operatingProfit: profitAfterFixedCosts,
           };
         });
       } else {
-        // ✅ Exclude gift-card-only orders from fixed-cost allocation (operational expenses)
         const enrichedOperational = enriched.filter(isOperational);
         const enrichedGiftOnly = enriched.filter((o) => !isOperational(o));
 
@@ -223,7 +219,7 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
             ...(o as any),
             fixedCostAllocated,
             profitAfterFixedCosts,
-            operatingProfit: profitAfterFixedCosts, // ✅ SSOT alias
+            operatingProfit: profitAfterFixedCosts,
           } as OrderProfitRow;
         });
 
@@ -233,20 +229,23 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
             ...o,
             fixedCostAllocated: 0,
             profitAfterFixedCosts,
-            operatingProfit: profitAfterFixedCosts, // ✅ SSOT alias
+            operatingProfit: profitAfterFixedCosts,
           };
         });
 
-        const byId = new Map<any, OrderProfitRow>([...allocatedOperational, ...giftOnlyPatched].map((x) => [x.id, x]));
+        const byId = new Map<any, OrderProfitRow>(
+          [...allocatedOperational, ...giftOnlyPatched].map((x) => [x.id, x])
+        );
         enriched = enriched.map((o) => byId.get(o.id) ?? o);
       }
 
-      // Safety net: if any row somehow missed alias, set it deterministically
       enriched = enriched.map((o) => {
         const pafc = Number(o.profitAfterFixedCosts ?? o.profitAfterAds ?? o.profitAfterFees ?? 0);
         return {
           ...o,
-          operatingProfit: Number.isFinite(Number(o.operatingProfit)) ? Number(o.operatingProfit) : round2(pafc),
+          operatingProfit: Number.isFinite(Number(o.operatingProfit))
+            ? Number(o.operatingProfit)
+            : round2(pafc),
         };
       });
 
@@ -257,7 +256,7 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
       });
 
       return reply.send({
-        shop, // ✅ now returns actual shop context
+        shop,
         days: daysNum,
         count: enriched.length,
         adSpend: adSpendNum > 0 ? adSpendNum : 0,
@@ -269,7 +268,7 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
         },
         costModel: {
           fingerprint: costProfile.meta.fingerprint,
-          persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+          persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         },
         orders: enriched,
       });

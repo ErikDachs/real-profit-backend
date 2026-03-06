@@ -1,10 +1,13 @@
-// src/routes/shopify/ordersSummary.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { round2 } from "../../utils/money.js";
 import { buildOrdersSummary } from "../../domain/profit.js";
 import { computeProfitHealthFromSummary } from "../../domain/health/profitHealth.js";
-import { parseDays, effectiveCostOverrides } from "./helpers.js";
+import {
+  parseDays,
+  parseShop,
+  effectiveCostOverrides,
+} from "./helpers.js";
 
 // ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
@@ -16,34 +19,31 @@ export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx
       const daysNum = parseDays(q, 30);
       const adSpendNum = round2(Number(q?.adSpend ?? 0) || 0);
 
-      // ✅ Determine shop context
-      const shopFromQuery = String(q?.shop ?? "").trim().toLowerCase();
-      const shop = shopFromQuery || ctx.shop;
+      const shop = parseShop(q, ctx.shop);
+      if (!shop) {
+        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
+      }
 
-      // ✅ Select correct Shopify client + order fetcher
-      const shopifyClient = shopFromQuery
-        ? await ctx.createShopifyForShop(shopFromQuery)
-        : ctx.shopify;
+      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
 
-      const orders = shopFromQuery
-        ? await ctx.fetchOrdersForShop(shopFromQuery, daysNum)
-        : await ctx.fetchOrders(daysNum);
+      const orders = shop === ctx.shop ? await ctx.fetchOrders(daysNum) : await ctx.fetchOrdersForShop(shop, daysNum);
 
-      // ✅ Select correct shop-scoped COGS services/stores
-      const cogsOverridesStore = shopFromQuery
-        ? await ctx.getCogsOverridesStoreForShop(shopFromQuery)
-        : ctx.cogsOverridesStore;
+      const cogsOverridesStore = shop === ctx.shop
+        ? ctx.cogsOverridesStore
+        : await ctx.getCogsOverridesStoreForShop(shop);
 
-      const cogsService = shopFromQuery
-        ? await ctx.getCogsServiceForShop(shopFromQuery)
-        : ctx.cogsService;
+      const cogsService = shop === ctx.shop
+        ? ctx.cogsService
+        : await ctx.getCogsServiceForShop(shop);
 
-      // ✅ persisted overrides + request overrides (request wins)
-      await ctx.costModelOverridesStore.ensureLoaded();
-      const persisted = ctx.costModelOverridesStore.getOverridesSync();
+      const costModelOverridesStore = shop === ctx.shop
+        ? ctx.costModelOverridesStore
+        : await ctx.getCostModelOverridesStoreForShop(shop);
+
+      await costModelOverridesStore.ensureLoaded();
+      const persisted = costModelOverridesStore.getOverridesSync();
       const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
 
-      // ✅ Resolve cost profile per request
       const costProfile = resolveCostProfile({
         config: (app as any).config ?? {},
         overrides: mergedOverrides,
@@ -77,7 +77,6 @@ export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx
         shippingCost: summary.shippingCost,
 
         missingCogsCount: summary.missingCogsCount,
-
         fixedCostsAllocatedInPeriod: summary.fixedCostsAllocatedInPeriod,
       });
 
@@ -86,7 +85,7 @@ export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx
         health,
         costModel: {
           fingerprint: costProfile.meta.fingerprint,
-          persistedUpdatedAt: ctx.costModelOverridesStore.getUpdatedAtSync() ?? null,
+          persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,
         },
       });
     } catch (err: any) {
