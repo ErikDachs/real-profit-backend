@@ -30,7 +30,9 @@ export function buildProfitKillersInsights(params: ProfitKillersParams) {
 
   const totalsOut = buildTotalsOut({ currency, totals, contributionMarginPct, breakEvenRoas });
 
-  const ordersWithReasons = enrichOrdersWithReasons(orders);
+  const operationalOrders = orders.filter((o: any) => !Boolean(o?.isGiftCardOnlyOrder));
+
+  const ordersWithReasons = enrichOrdersWithReasons(operationalOrders);
 
   const worstOrders = pickWorstOrders(ordersWithReasons, limit);
   const bestOrders = pickBestOrders(ordersWithReasons, limit);

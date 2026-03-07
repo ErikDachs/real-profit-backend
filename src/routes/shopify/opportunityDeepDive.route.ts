@@ -109,33 +109,32 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
           isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
         });
 
-        orderProfits.push({
-          id: o.id,
-          name: o.name ?? null,
-          createdAt: o.created_at ?? null,
-          currency: o.currency ?? null,
+orderProfits.push({
+  id: o.id,
+  name: o.name ?? null,
+  createdAt: o.created_at ?? null,
+  currency: o.currency ?? null,
 
-          grossSales: p.grossSales,
-          refunds: p.refunds,
-          netAfterRefunds: p.netAfterRefunds,
-          cogs: p.cogs,
-          paymentFees: p.paymentFees,
+  grossSales: p.grossSales,
+  refunds: p.refunds,
+  netAfterRefunds: p.netAfterRefunds,
+  cogs: p.cogs,
+  paymentFees: p.paymentFees,
 
-          contributionMargin: p.contributionMargin,
-          contributionMarginPct: p.contributionMarginPct,
+  contributionMargin: p.contributionMargin,
+  contributionMarginPct: p.contributionMarginPct,
 
-          // ✅ Gift-card governance facts
-          isGiftCardOnlyOrder: p.isGiftCardOnlyOrder,
-          giftCardNetSalesExcluded: p.giftCardNetSalesExcluded,
+  isGiftCardOnlyOrder: p.isGiftCardOnlyOrder,
+  giftCardNetSalesExcluded: p.giftCardNetSalesExcluded,
 
-          shippingRevenue: p.shippingRevenue,
-          shippingCost: p.shippingCost,
-          shippingImpact: p.shippingImpact,
-          profitAfterShipping: p.profitAfterShipping,
+  shippingRevenue: p.shippingRevenue,
+  shippingCost: p.shippingCost,
+  shippingImpact: p.shippingImpact,
+  profitAfterShipping: p.profitAfterShipping,
 
-          adSpendBreakEven: p.adSpendBreakEven,
-          breakEvenRoas: p.breakEvenRoas,
-        });
+  adSpendBreakEven: p.adSpendBreakEven,
+  breakEvenRoas: p.breakEvenRoas,
+});
       }
 
       const daily = buildDailyProfit({

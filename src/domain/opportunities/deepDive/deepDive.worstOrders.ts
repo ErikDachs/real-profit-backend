@@ -13,7 +13,9 @@ function shippingImpactValue(o: any): number {
 export function pickWorstOrders(params: { orders: OrderProfitRow[]; type: OpportunityType; limit: number }) {
   const { orders, type, limit } = params;
 
-  const sorted = [...orders].sort((a, b) => {
+  const sorted = [...orders]
+  .filter((o: any) => !Boolean(o?.isGiftCardOnlyOrder))
+  .sort((a, b) => {
     if (type === "HIGH_REFUNDS") return Number((b as any).refunds || 0) - Number((a as any).refunds || 0);
     if (type === "HIGH_FEES") return Number((b as any).paymentFees || 0) - Number((a as any).paymentFees || 0);
     if (type === "SHIPPING_SUBSIDY") {
