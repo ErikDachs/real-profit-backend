@@ -58,9 +58,16 @@ function pickInsight(insightsArr: any[] | undefined, type: string) {
   return insightsArr.find((x) => x?.type === type) ?? null;
 }
 
-function pickCurrency(summary: any, fallback: string) {
-  const c = summary?.currency ?? summary?.meta?.currency ?? null;
-  return typeof c === "string" && c.trim().length ? c : fallback;
+function pickCurrency(summary: any, orders: any[], fallback: string) {
+  const fromSummary = summary?.currency ?? summary?.meta?.currency ?? null;
+  if (typeof fromSummary === "string" && fromSummary.trim().length) return fromSummary;
+
+  for (const o of orders ?? []) {
+    const c = typeof o?.currency === "string" ? o.currency.trim() : "";
+    if (c) return c;
+  }
+
+  return fallback;
 }
 
 export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: ShopifyCtx) {
@@ -260,7 +267,7 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
 
       const opportunities = profitKillers?.opportunities ?? { top: [], all: [] };
 
-      const currency = pickCurrency(summary as any, "USD");
+      const currency = pickCurrency(summary as any, ordersRaw, "USD");
       const fingerprint = (costProfile as any)?.meta?.fingerprint ?? undefined;
 
       const actions = buildActionPlan({
@@ -280,7 +287,7 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
       return reply.send({
         shop,
         meta: {
-          currency: (summary as any)?.currency ?? null,
+          currency,
           periodDays: days,
           periodLabel: `Last ${days} days`,
           costModelFingerprint: (costProfile as any)?.meta?.fingerprint ?? null,

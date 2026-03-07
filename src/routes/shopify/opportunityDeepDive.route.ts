@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 
 import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit.js";
+import { buildOrdersSummary } from "../../domain/profit/ordersSummary.js";
 import { buildDailyProfit } from "../../domain/profitDaily.js";
 
 import {
@@ -25,6 +26,14 @@ import type { OpportunityType } from "../../domain/opportunities/types.js";
 // ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 
+function pickCurrencyFromOrders(orders: any[], fallback = "USD"): string {
+  for (const o of orders ?? []) {
+    const c = typeof o?.currency === "string" ? o.currency.trim() : "";
+    if (c) return c;
+  }
+  return fallback;
+}
+
 export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/opportunities/deep-dive", async (req, reply) => {
     try {
@@ -44,6 +53,10 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
       const orders = shop === ctx.shop
         ? await ctx.fetchOrders(daysNum)
         : await ctx.fetchOrdersForShop(shop, daysNum);
+
+      const cogsOverridesStore = shop === ctx.shop
+        ? ctx.cogsOverridesStore
+        : await ctx.getCogsOverridesStoreForShop(shop);
 
       const cogsService = shop === ctx.shop
         ? ctx.cogsService
@@ -72,6 +85,19 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
         shopifyGET: shopifyClient.get,
       });
 
+      // ✅ SSOT summary source for missingCogsCount
+      const summary = await buildOrdersSummary({
+        shop,
+        days: daysNum,
+        adSpend: Number(adSpend ?? 0) || 0,
+        orders,
+        costProfile,
+        cogsService,
+        shopifyGET: shopifyClient.get,
+        unitCostByVariant,
+        isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
+      });
+
       const orderProfits: any[] = [];
       for (const o of orders) {
         const p = await calculateOrderProfit({
@@ -80,6 +106,7 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
           cogsService,
           shopifyGET: shopifyClient.get,
           unitCostByVariant,
+          isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
         });
 
         orderProfits.push({
@@ -137,7 +164,9 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
       });
 
       const productsRaw = (productResult?.products ?? []) as any[];
-      const missingCogsCount = Number(productResult?.highlights?.missingCogsCount ?? 0);
+
+      // ✅ ONLY from SSOT summary now
+      const missingCogsCount = Number(summary?.missingCogsCount ?? 0);
 
       const spend = Number(adSpend ?? 0);
 
@@ -156,7 +185,7 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
         baseProfit: (p) => Number((p as any).profitAfterFees ?? 0),
       });
 
-      const currency = ordersEnriched[0]?.currency ?? "USD";
+      const currency = pickCurrencyFromOrders(ordersEnriched, "USD");
 
       const shippingSubsidy = buildShippingSubsidyInsight({
         currency,

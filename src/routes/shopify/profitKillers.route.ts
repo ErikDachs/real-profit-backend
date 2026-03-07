@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { calculateOrderProfit, buildProductsProfit } from "../../domain/profit.js";
+import { buildOrdersSummary } from "../../domain/profit/ordersSummary.js";
 import { buildDailyProfit } from "../../domain/profitDaily.js";
 import { buildProfitKillersInsights } from "../../domain/insights.js";
 import {
@@ -69,6 +70,19 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
         shopifyGET: shopifyClient.get,
       });
 
+      // ✅ SSOT summary source for missingCogsCount
+      const summary = await buildOrdersSummary({
+        shop,
+        days: daysNum,
+        adSpend: Number(adSpend ?? 0) || 0,
+        orders,
+        costProfile,
+        cogsService,
+        shopifyGET: shopifyClient.get,
+        unitCostByVariant,
+        isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
+      });
+
       const orderProfits: any[] = [];
       for (const o of orders) {
         const p = await calculateOrderProfit({
@@ -135,7 +149,9 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
       });
 
       const productsRaw = (productResult?.products ?? []) as any[];
-      const missingCogsCount = Number(productResult?.highlights?.missingCogsCount ?? 0);
+
+      // ✅ ONLY from SSOT summary now
+      const missingCogsCount = Number(summary?.missingCogsCount ?? 0);
 
       const spend = Number(adSpend ?? 0);
 

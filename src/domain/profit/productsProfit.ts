@@ -3,9 +3,149 @@ import { round2 } from "../../utils/money.js";
 import type { CogsService, VariantQty } from "../cogs.js";
 import { extractRefundsFromOrder } from "./refunds.js";
 import { allocateAdSpendForProducts, computeProfitAfterAds } from "./ads.js";
-
-// ✅ NEW
 import type { CostProfile } from "../costModel/types.js";
+
+function toNum(v: any): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseGidToId(maybeGid: any): number {
+  if (typeof maybeGid !== "string") return toNum(maybeGid);
+  const m = maybeGid.match(/(\d+)\s*$/);
+  return m ? toNum(m[1]) : 0;
+}
+
+function parseStrictBool(v: any): boolean {
+  if (v === true) return true;
+  if (v === false || v == null) return false;
+
+  if (typeof v === "number") return v === 1;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1") return true;
+    if (s === "false" || s === "0" || s === "") return false;
+  }
+
+  return false;
+}
+
+function isGiftCardLike(li: any): boolean {
+  return parseStrictBool(li?.gift_card ?? li?.giftCard ?? false);
+}
+
+function readMoneyAmount(v: any): number {
+  if (v == null) return 0;
+
+  if (typeof v === "number" || typeof v === "string") {
+    return toNum(v);
+  }
+
+  return (
+    toNum(v?.amount) ||
+    toNum(v?.shopMoney?.amount) ||
+    toNum(v?.presentmentMoney?.amount) ||
+    0
+  );
+}
+
+function extractUnitPrice(li: any): number {
+  return (
+    toNum(li?.price) ||
+    readMoneyAmount(li?.originalUnitPriceSet) ||
+    readMoneyAmount(li?.discountedUnitPriceSet) ||
+    readMoneyAmount(li?.originalUnitPrice) ||
+    readMoneyAmount(li?.discountedUnitPrice) ||
+    toNum(li?.variant?.price) ||
+    0
+  );
+}
+
+type NormalizedLine = {
+  productId: number;
+  variantId: number;
+  qty: number;
+  lineGross: number;
+  title: string;
+  variantTitle?: string;
+  sku?: string;
+};
+
+function normalizeLineItem(li: any): NormalizedLine | null {
+  if (!li || isGiftCardLike(li)) return null;
+
+  const productId =
+    toNum(li?.product_id) ||
+    toNum(li?.productId) ||
+    parseGidToId(li?.product?.id) ||
+    0;
+
+  const variantId =
+    toNum(li?.variant_id) ||
+    toNum(li?.variantId) ||
+    parseGidToId(li?.variant?.id) ||
+    parseGidToId(li?.variantId) ||
+    0;
+
+  const qty =
+    toNum(li?.quantity) ||
+    toNum(li?.qty) ||
+    toNum(li?.currentQuantity) ||
+    0;
+
+  const unitPrice = extractUnitPrice(li);
+  const lineGross = unitPrice * qty;
+
+  if (!(variantId > 0) || !(qty > 0)) return null;
+
+  return {
+    productId,
+    variantId,
+    qty,
+    lineGross,
+    title: String(li?.title ?? li?.name ?? ""),
+    variantTitle:
+      li?.variant_title != null
+        ? String(li.variant_title)
+        : li?.variantTitle != null
+          ? String(li.variantTitle)
+          : li?.variant?.title != null
+            ? String(li.variant.title)
+            : undefined,
+    sku:
+      li?.sku != null
+        ? String(li.sku)
+        : li?.variant?.sku != null
+          ? String(li.variant.sku)
+          : undefined,
+  };
+}
+
+function collectRawLineItems(order: any): any[] {
+  const out: any[] = [];
+
+  if (Array.isArray(order?.line_items)) out.push(...order.line_items);
+  if (Array.isArray(order?.lineItems)) out.push(...order.lineItems);
+
+  if (Array.isArray(order?.lineItems?.nodes)) out.push(...order.lineItems.nodes);
+  if (Array.isArray(order?.line_items?.nodes)) out.push(...order.line_items.nodes);
+
+  if (Array.isArray(order?.lineItems?.edges)) {
+    for (const e of order.lineItems.edges) out.push(e?.node ?? e);
+  }
+
+  if (Array.isArray(order?.line_items?.edges)) {
+    for (const e of order.line_items.edges) out.push(e?.node ?? e);
+  }
+
+  return out;
+}
+
+function extractOrderLines(order: any): NormalizedLine[] {
+  return collectRawLineItems(order)
+    .map(normalizeLineItem)
+    .filter((x): x is NormalizedLine => x !== null);
+}
 
 export async function buildProductsProfit(params: {
   shop: string;
@@ -27,7 +167,8 @@ export async function buildProductsProfit(params: {
   const feePercent = Number(costProfile.payment.feePercent || 0);
   const feeFixed = Number(costProfile.payment.feeFixed || 0);
 
-  // Fee base = netAfterRefunds (includes shipping revenue)
+  // Fee base remains period netAfterRefunds from order totals.
+  // This preserves existing behavior and avoids hidden economic model drift in this step.
   const grossSalesTotal = orders.reduce((s: number, o: any) => s + Number(o.total_price || 0), 0);
   const refundsTotal = orders.reduce((s: number, o: any) => s + extractRefundsFromOrder(o), 0);
   const netAfterRefundsTotal = grossSalesTotal - refundsTotal;
@@ -67,28 +208,7 @@ export async function buildProductsProfit(params: {
   }> = [];
 
   for (const o of orders) {
-    const items = o.line_items ?? [];
-
-    const orderLines = items
-      .map((li: any) => {
-        const productId = Number(li.product_id || 0);
-        const variantId = Number(li.variant_id || 0);
-        const qty = Number(li.quantity || 0);
-
-        const unitPrice = Number(li.price || 0);
-        const lineGross = unitPrice * qty;
-
-        return {
-          productId,
-          variantId,
-          qty,
-          lineGross,
-          title: String(li.title ?? ""),
-          variantTitle: li.variant_title ? String(li.variant_title) : undefined,
-          sku: li.sku ? String(li.sku) : undefined,
-        };
-      })
-      .filter((x: any) => x.variantId > 0 && x.qty > 0);
+    const orderLines = extractOrderLines(o);
 
     const orderLinesGross = orderLines.reduce((s: number, x: any) => s + x.lineGross, 0);
     const orderRefund = extractRefundsFromOrder(o);
@@ -124,6 +244,11 @@ export async function buildProductsProfit(params: {
       cur.refundsAllocated += refundAlloc;
       cur.netSales += net;
 
+      // deterministic first-non-empty metadata wins
+      if (!cur.title && li.title) cur.title = li.title;
+      if (!cur.variantTitle && li.variantTitle) cur.variantTitle = li.variantTitle;
+      if (!cur.sku && li.sku) cur.sku = li.sku;
+
       byKey.set(key, cur);
 
       allLineItems.push({
@@ -138,7 +263,6 @@ export async function buildProductsProfit(params: {
     }
   }
 
-  // COGS compute once per variant aggregation
   const variantQtyForCogs: VariantQty[] = allLineItems.map((x) => ({
     variantId: x.variantId,
     qty: x.qty,
@@ -150,7 +274,6 @@ export async function buildProductsProfit(params: {
     p.cogs = cogsByVariant.get(p.variantId) ?? 0;
   }
 
-  // Allocate payment fees by netSales share
   const totalNetSales = Array.from(byKey.values()).reduce((s, p) => s + p.netSales, 0);
 
   const paymentFeesTotal = netAfterRefundsTotal * feePercent + orderCount * feeFixed;
@@ -161,11 +284,9 @@ export async function buildProductsProfit(params: {
 
     const profitAfterFees = p.netSales - p.cogs - feeAlloc;
     p.profitAfterFees = profitAfterFees;
-
     p.marginPct = p.netSales > 0 ? (profitAfterFees / p.netSales) * 100 : 0;
   }
 
-  // Ad spend allocation (optional)
   const spend = Number(params.adSpend ?? 0);
   if (Number.isFinite(spend) && spend > 0) {
     const allocated = allocateAdSpendForProducts({
@@ -221,6 +342,8 @@ export async function buildProductsProfit(params: {
     .sort((a: any, b: any) => (a.profitAfterAds ?? a.profitAfterFees) - (b.profitAfterAds ?? b.profitAfterFees))
     .slice(0, 3);
 
+  // Transitional heuristic only.
+  // This is intentionally kept for compatibility in this step, but it is NOT the final SSOT missing-COGS model.
   const missingCogs = products
     .filter((p: any) => p.cogs === 0 && p.qty > 0 && p.netSales > 0)
     .map((p: any) => ({
