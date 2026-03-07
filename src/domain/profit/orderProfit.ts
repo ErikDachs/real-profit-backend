@@ -52,8 +52,9 @@ export async function calculateOrderProfit(params: {
   // ✅ Flag-gated governance
   // If excludeGiftCards=true, gift-card-only orders are excluded from KPIs (fees/CM/etc = 0),
   // but raw values remain visible (grossSales/refunds/shippingRevenue).
-  const excludeGiftCards = Boolean((costProfile as any)?.flags?.excludeGiftCards ?? false);
- const excludeGiftCardOnlyFromKpis = isGiftCardOnlyOrder && excludeGiftCards;
+
+const excludeGiftCards = Boolean((costProfile as any)?.flags?.excludeGiftCards ?? false);
+const excludeGiftCardOnlyFromKpis = isGiftCardOnlyOrder && excludeGiftCards;
 
   // Gift card transparency (always)
   const giftCardNetSalesExcluded = isGiftCardOnlyOrder ? rawNetAfterRefunds : 0;
@@ -65,11 +66,9 @@ export async function calculateOrderProfit(params: {
   //   Gift-card-only => operational view => grossSales/refunds/netAfterRefunds = 0
   // Governance behavior (excludeGiftCards=true):
   //   Gift-card-only => KPIs excluded, but raw values must remain visible for grossSales/refunds/shippingRevenue
-  const grossSales = excludeGiftCardOnlyFromKpis ? rawGrossSales : isGiftCardOnlyOrder ? 0 : rawGrossSales;
-  const refunds = excludeGiftCardOnlyFromKpis ? rawRefunds : isGiftCardOnlyOrder ? 0 : rawRefunds;
-
-  // KPIs always use operational net:
-  const netAfterRefunds = isGiftCardOnlyOrder ? 0 : rawNetAfterRefunds;
+const grossSales = excludeGiftCardOnlyFromKpis ? rawGrossSales : isGiftCardOnlyOrder ? 0 : rawGrossSales;
+const refunds = excludeGiftCardOnlyFromKpis ? rawRefunds : isGiftCardOnlyOrder ? 0 : rawRefunds;
+const netAfterRefunds = isGiftCardOnlyOrder ? 0 : rawNetAfterRefunds;
 
   // -------------------------
   // COGS + Missing COGS governance
@@ -118,42 +117,42 @@ export async function calculateOrderProfit(params: {
   // - excludeGiftCards=true + gift-only => paymentFees=0
   // - otherwise gift-only => fees are real on RAW netAfterRefunds (percent + fixed)
   // - non gift-only => also rawNetAfterRefunds (same as operational net here)
-  const paymentFees = excludeGiftCardOnlyFromKpis
-    ? 0
-    : calcPaymentFees({
-        netAfterRefunds: rawNetAfterRefunds,
-        orderCount: 1,
-        feePercent,
-        feeFixed,
-      });
+const paymentFees = excludeGiftCardOnlyFromKpis
+  ? 0
+  : calcPaymentFees({
+      netAfterRefunds: rawNetAfterRefunds,
+      orderCount: 1,
+      feePercent,
+      feeFixed,
+    });
 
   // -------------------------
   // Core metrics (operational KPIs)
   // -------------------------
-  const contributionMargin = excludeGiftCardOnlyFromKpis
-    ? 0
-    : calcContributionMargin({
-        netAfterRefunds,
-        cogs,
-        paymentFees,
-      });
+const contributionMargin = excludeGiftCardOnlyFromKpis
+  ? 0
+  : calcContributionMargin({
+      netAfterRefunds,
+      cogs,
+      paymentFees,
+    });
 
-  const contributionMarginPct = excludeGiftCardOnlyFromKpis
-    ? 0
-    : calcContributionMarginPct({
-        netAfterRefunds,
-        contributionMargin,
-      });
+const contributionMarginPct = excludeGiftCardOnlyFromKpis
+  ? 0
+  : calcContributionMarginPct({
+      netAfterRefunds,
+      contributionMargin,
+    });
 
   // Contract:
   // - excludeGiftCards=true + gift-only => breakEvenRoas must be 0 (not null)
   // - otherwise use metrics result
-  const breakEvenRoas = excludeGiftCardOnlyFromKpis
-    ? 0
-    : calcBreakEvenRoas({
-        netAfterRefunds,
-        contributionMargin,
-      });
+const breakEvenRoas = excludeGiftCardOnlyFromKpis
+  ? 0
+  : calcBreakEvenRoas({
+      netAfterRefunds,
+      contributionMargin,
+    });
 
   // -------------------------
   // Shipping
@@ -161,7 +160,11 @@ export async function calculateOrderProfit(params: {
   // Contract:
   // - excludeGiftCards=true + gift-only => shippingRevenue must remain visible (raw)
   // - otherwise: shippingRevenue is operational; for gift-only it can be 0 (not asserted elsewhere)
-  const shippingRevenue = excludeGiftCardOnlyFromKpis ? rawShippingRevenue : isGiftCardOnlyOrder ? 0 : rawShippingRevenue;
+const shippingRevenue = excludeGiftCardOnlyFromKpis
+  ? rawShippingRevenue
+  : isGiftCardOnlyOrder
+    ? 0
+    : rawShippingRevenue;
 
   const includeShippingCost = Boolean((costProfile as any)?.flags?.includeShippingCost ?? true);
 
