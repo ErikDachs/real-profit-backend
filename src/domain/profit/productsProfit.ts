@@ -1,8 +1,8 @@
-// src/domain/profit/productsProfit.ts
 import { round2 } from "../../utils/money.js";
 import type { CogsService, VariantQty } from "../cogs.js";
 import { extractRefundsFromOrder } from "./refunds.js";
 import { allocateAdSpendForProducts, computeProfitAfterAds } from "./ads.js";
+import { isMissingUnitCost } from "./cogsGovernance.js";
 import type { CostProfile } from "../costModel/types.js";
 
 function toNum(v: any): number {
@@ -31,7 +31,20 @@ function parseStrictBool(v: any): boolean {
 }
 
 function isGiftCardLike(li: any): boolean {
-  return parseStrictBool(li?.gift_card ?? li?.giftCard ?? false);
+  if (parseStrictBool(li?.gift_card ?? li?.giftCard ?? false)) return true;
+
+  const title = String(li?.title ?? li?.name ?? "").trim().toLowerCase();
+  const variantTitle = String(li?.variant_title ?? li?.variantTitle ?? li?.variant?.title ?? "").trim().toLowerCase();
+
+  // harte Realität:
+  // dein GraphQL-Normalizer liefert derzeit Gift Cards nicht als gift_card=true mit,
+  // daher brauchen wir diese defensive Erkennung, sonst leakst du Gift Cards wieder
+  // in die operative Produktprofit-Welt.
+  if (title === "gift card") return true;
+  if (title.includes("gift card")) return true;
+  if (variantTitle.includes("gift card")) return true;
+
+  return false;
 }
 
 function readMoneyAmount(v: any): number {
@@ -45,6 +58,8 @@ function readMoneyAmount(v: any): number {
     toNum(v?.amount) ||
     toNum(v?.shopMoney?.amount) ||
     toNum(v?.presentmentMoney?.amount) ||
+    toNum(v?.shop_money?.amount) ||
+    toNum(v?.presentment_money?.amount) ||
     0
   );
 }
@@ -157,18 +172,32 @@ export async function buildProductsProfit(params: {
   cogsService: CogsService;
   shopifyGET: (path: string) => Promise<any>;
 
-  // optional
   adSpend?: number;
+
+  /**
+   * Optional fast path / governance alignment
+   */
+  unitCostByVariant?: Map<number, number | undefined>;
+  isIgnoredVariant?: (variantId: number) => boolean;
 }) {
-  const { shop, days, orders, costProfile, cogsService, shopifyGET } = params;
+  const {
+    shop,
+    days,
+    orders,
+    costProfile,
+    cogsService,
+    shopifyGET,
+    unitCostByVariant: unitCostByVariantInput,
+    isIgnoredVariant,
+  } = params;
 
   const orderCount = orders.length;
 
   const feePercent = Number(costProfile.payment.feePercent || 0);
   const feeFixed = Number(costProfile.payment.feeFixed || 0);
 
-  // Fee base remains period netAfterRefunds from order totals.
-  // This preserves existing behavior and avoids hidden economic model drift in this step.
+  // Fee base bleibt wie bisher auf Order-Level-Netto.
+  // Das ist nicht perfekt, aber wir ändern hier NICHT stillschweigend das ökonomische Modell.
   const grossSalesTotal = orders.reduce((s: number, o: any) => s + Number(o.total_price || 0), 0);
   const refundsTotal = orders.reduce((s: number, o: any) => s + extractRefundsFromOrder(o), 0);
   const netAfterRefundsTotal = grossSalesTotal - refundsTotal;
@@ -186,6 +215,7 @@ export async function buildProductsProfit(params: {
     netSales: number;
 
     cogs: number;
+    hasMissingCogs: boolean;
 
     paymentFeesAllocated: number;
     profitAfterFees: number;
@@ -233,6 +263,7 @@ export async function buildProductsProfit(params: {
           netSales: 0,
 
           cogs: 0,
+          hasMissingCogs: false,
 
           paymentFeesAllocated: 0,
           profitAfterFees: 0,
@@ -268,10 +299,38 @@ export async function buildProductsProfit(params: {
     qty: x.qty,
   }));
 
+  const variantIds = Array.from(
+    new Set(
+      variantQtyForCogs
+        .map((x) => x.variantId)
+        .filter((x) => Number.isFinite(x) && x > 0)
+    )
+  );
+
+  const unitCostByVariant =
+    unitCostByVariantInput ??
+    (variantIds.length > 0 && typeof (cogsService as any).computeUnitCostsByVariant === "function"
+      ? await (cogsService as any).computeUnitCostsByVariant(shopifyGET, variantIds)
+      : new Map<number, number | undefined>());
+
+  const hasUnitCostSupport =
+    unitCostByVariantInput instanceof Map ||
+    typeof (cogsService as any).computeUnitCostsByVariant === "function";
+
   const cogsByVariant = await cogsService.computeCogsByVariant(shopifyGET, variantQtyForCogs);
 
   for (const p of byKey.values()) {
     p.cogs = cogsByVariant.get(p.variantId) ?? 0;
+
+    // Nur dann echte Missing-COGS-Governance anwenden,
+    // wenn wir auch echte Unit-Cost-Daten haben.
+    p.hasMissingCogs = hasUnitCostSupport
+      ? isMissingUnitCost({
+          unitCost: unitCostByVariant.get(p.variantId),
+          variantId: p.variantId,
+          isIgnoredVariant,
+        })
+      : false;
   }
 
   const totalNetSales = Array.from(byKey.values()).reduce((s, p) => s + p.netSales, 0);
@@ -320,6 +379,7 @@ export async function buildProductsProfit(params: {
       netSales: round2(p.netSales),
 
       cogs: round2(p.cogs),
+      hasMissingCogs: Boolean(p.hasMissingCogs),
 
       paymentFeesAllocated: round2(p.paymentFeesAllocated),
       profitAfterFees: round2(p.profitAfterFees),
@@ -342,10 +402,8 @@ export async function buildProductsProfit(params: {
     .sort((a: any, b: any) => (a.profitAfterAds ?? a.profitAfterFees) - (b.profitAfterAds ?? b.profitAfterFees))
     .slice(0, 3);
 
-  // Transitional heuristic only.
-  // This is intentionally kept for compatibility in this step, but it is NOT the final SSOT missing-COGS model.
   const missingCogs = products
-    .filter((p: any) => p.cogs === 0 && p.qty > 0 && p.netSales > 0)
+    .filter((p: any) => p.hasMissingCogs === true)
     .map((p: any) => ({
       productId: p.productId,
       variantId: p.variantId,

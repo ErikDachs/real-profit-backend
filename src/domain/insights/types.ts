@@ -1,5 +1,3 @@
-// src/domain/insights/types.ts
-
 export type OrderProfitRow = {
   id: number | string;
   name?: string | null;
@@ -44,6 +42,14 @@ export type ProductProfitRow = {
   netSales: number;
 
   cogs: number;
+
+  /**
+   * SSOT-aligned fact:
+   * true => this variant is missing COGS under governance rules
+   * false => not missing (including ignored variants)
+   */
+  hasMissingCogs: boolean;
+
   paymentFeesAllocated: number;
 
   profitAfterFees: number;
@@ -87,7 +93,6 @@ export type ProfitKillersParams = {
 
   shippingTotals?: ShippingTotalsInput;
 
-  // ✅ NEW
   fixedCosts?: {
     monthlyTotal: number;
     allocatedInPeriod: number;

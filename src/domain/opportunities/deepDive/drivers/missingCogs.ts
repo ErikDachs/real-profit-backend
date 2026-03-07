@@ -1,4 +1,3 @@
-// src/domain/opportunities/deepDive/drivers/missingCogs.ts
 import { round2 } from "../../../../utils/money.js";
 import type { OrderProfitRow, ProductProfitRow } from "../../../insights/types.js";
 import type { DeepDiveDriver } from "../types.js";
@@ -13,13 +12,14 @@ export function buildMissingCogsDrivers(params: {
   const { products, limit } = params;
 
   const missing = [...products]
-    .map((p: any) => {
-      const cogs = Number(p.cogs || 0);
-      const net = Number((p as any).netSales || 0);
-      const qty = Number((p as any).qty || 0);
-      return { p, cogs, net, qty };
+    .map((p) => {
+      const net = Number(p.netSales || 0);
+      const qty = Number(p.qty || 0);
+      const hasMissingCogs = Boolean(p.hasMissingCogs);
+
+      return { p, net, qty, hasMissingCogs };
     })
-    .filter((x) => x.qty > 0 && x.net > 0 && x.cogs === 0);
+    .filter((x) => x.hasMissingCogs && x.qty > 0 && x.net > 0);
 
   const totalExposure = missing.reduce((s, x) => s + Number(x.net || 0), 0);
 
@@ -32,13 +32,14 @@ export function buildMissingCogsDrivers(params: {
         title: String(p.title || ""),
         sku: p.sku ?? null,
         variantTitle: p.variantTitle ?? null,
-        impact: Math.max(0, net), // exposure proxy
+        impact: Math.max(0, net),
         impactSharePct: 0,
         metrics: {
           netSalesExposure: round2(net),
-          qty: qty,
+          qty,
+          missingCogsFlag: 1,
         },
-      } as DeepDiveDriver;
+      };
     })
     .sort((a, b) => Number(b.impact || 0) - Number(a.impact || 0))
     .slice(0, limit);
