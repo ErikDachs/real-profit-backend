@@ -1,4 +1,3 @@
-// src/integrations/shopify/ordersGraphql.ts
 import { createShopifyClient } from "./client.js";
 
 function isoSince(days: number) {
@@ -23,16 +22,18 @@ function buildMoneySet(node: any) {
   const pres = node?.presentmentMoney?.amount ?? node?.shopMoney?.amount ?? "0";
 
   return {
-    shop_money: { amount: String(shop), currency_code: node?.shopMoney?.currencyCode ?? null },
-    presentment_money: { amount: String(pres), currency_code: node?.presentmentMoney?.currencyCode ?? null },
+    shop_money: {
+      amount: String(shop),
+      currency_code: node?.shopMoney?.currencyCode ?? null,
+    },
+    presentment_money: {
+      amount: String(pres),
+      currency_code: node?.presentmentMoney?.currencyCode ?? null,
+    },
   };
 }
 
 function normalizeListOrConnection(input: any): any[] {
-  // Accept either:
-  // - [ {..}, {..} ]
-  // - { nodes: [ {...}, {...} ] }
-  // - { edges: [ { node: {...} } ] }
   if (!input) return [];
   if (Array.isArray(input)) return input;
 
@@ -45,6 +46,37 @@ function normalizeListOrConnection(input: any): any[] {
   return [];
 }
 
+function pickUnitPriceShopAmount(lineNode: any): string {
+  // Deterministic precedence:
+  // 1) originalUnitPriceSet
+  // 2) discountedUnitPriceSet
+  // 3) originalTotalSet / quantity fallback
+  // 4) discountedTotalSet / quantity fallback
+  const originalUnit = lineNode?.originalUnitPriceSet?.shopMoney?.amount;
+  if (originalUnit !== null && originalUnit !== undefined) {
+    return String(originalUnit);
+  }
+
+  const discountedUnit = lineNode?.discountedUnitPriceSet?.shopMoney?.amount;
+  if (discountedUnit !== null && discountedUnit !== undefined) {
+    return String(discountedUnit);
+  }
+
+  const qty = Math.max(0, Number(lineNode?.quantity ?? 0) || 0);
+
+  const originalTotal = lineNode?.originalTotalSet?.shopMoney?.amount;
+  if (originalTotal !== null && originalTotal !== undefined && qty > 0) {
+    return String(Number(originalTotal) / qty);
+  }
+
+  const discountedTotal = lineNode?.discountedTotalSet?.shopMoney?.amount;
+  if (discountedTotal !== null && discountedTotal !== undefined && qty > 0) {
+    return String(Number(discountedTotal) / qty);
+  }
+
+  return "0";
+}
+
 function toRestLikeOrder(gql: any): any {
   const idNum = parseGidNumber(gql?.id);
 
@@ -55,39 +87,42 @@ function toRestLikeOrder(gql: any): any {
   const total_price = totalPriceSet?.shopMoney?.amount ?? "0";
   const current_total_price = currentTotalPriceSet?.shopMoney?.amount ?? total_price;
 
-  // lineItems is a connection in Shopify GraphQL
   const lineNodes = normalizeListOrConnection(gql?.lineItems);
   const line_items = lineNodes.map((n: any) => {
     const variantId = parseGidNumber(n?.variant?.id);
-    const productId = parseGidNumber(n?.variant?.product?.id);
+    const productId =
+      parseGidNumber(n?.variant?.product?.id) ||
+      parseGidNumber(n?.product?.id);
 
     return {
       variant_id: variantId || null,
       product_id: productId || null,
       quantity: Number(n?.quantity ?? 0) || 0,
       title: n?.title ?? null,
+      variant_title: n?.variantTitle ?? n?.variant?.title ?? null,
       sku: n?.variant?.sku ?? null,
+
+      // critical for product profit aggregation
+      price: pickUnitPriceShopAmount(n),
+
+      // optional compatibility payloads
+      original_unit_price_set: buildMoneySet(n?.originalUnitPriceSet),
+      discounted_unit_price_set: buildMoneySet(n?.discountedUnitPriceSet),
+      original_total_set: buildMoneySet(n?.originalTotalSet),
+      discounted_total_set: buildMoneySet(n?.discountedTotalSet),
     };
   });
 
-  // refunds: Shopify can surface as list or connection depending on context/version.
-  // We'll accept both.
   const refundNodes = normalizeListOrConnection(gql?.refunds);
 
   const refunds = refundNodes.map((r: any) => {
-    // Refund.transactions is documented as OrderTransactionConnection (connection),
-    // but we support list/connection defensively anyway.
     const txNodes = normalizeListOrConnection(r?.transactions);
 
     let transactions = txNodes.map((t: any) => {
-      // OrderTransaction.amountSet exists on the node; use shopMoney amount for deterministic accounting.
       const amt = t?.amountSet?.shopMoney?.amount ?? "0";
       return { amount: String(amt) };
     });
 
-    // Defensive fallback:
-    // If transactions are missing/empty but refund has a totalRefundedSet, synthesize one tx.
-    // This keeps your Domain extractor working and avoids silent 0-refund bugs.
     if (transactions.length === 0) {
       const totalRefundedAmt = r?.totalRefundedSet?.shopMoney?.amount;
       if (totalRefundedAmt !== null && totalRefundedAmt !== undefined) {
@@ -144,9 +179,32 @@ query OrdersSince($first: Int!, $after: String, $query: String!) {
           edges {
             node {
               title
+              variantTitle
               quantity
+
+              originalUnitPriceSet {
+                shopMoney { amount currencyCode }
+                presentmentMoney { amount currencyCode }
+              }
+
+              discountedUnitPriceSet {
+                shopMoney { amount currencyCode }
+                presentmentMoney { amount currencyCode }
+              }
+
+              originalTotalSet {
+                shopMoney { amount currencyCode }
+                presentmentMoney { amount currencyCode }
+              }
+
+              discountedTotalSet {
+                shopMoney { amount currencyCode }
+                presentmentMoney { amount currencyCode }
+              }
+
               variant {
                 id
+                title
                 sku
                 product { id }
               }
@@ -191,9 +249,32 @@ query OrderById($id: ID!) {
       edges {
         node {
           title
+          variantTitle
           quantity
+
+          originalUnitPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+
+          discountedUnitPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+
+          originalTotalSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+
+          discountedTotalSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+
           variant {
             id
+            title
             sku
             product { id }
           }
@@ -218,7 +299,6 @@ query OrderById($id: ID!) {
 `;
 
 function ordersQueryString(params: { sinceIso: string }) {
-  // Keep it simple & PII-free
   return `status:any created_at:>=${params.sinceIso}`;
 }
 
@@ -240,7 +320,10 @@ export async function fetchOrdersGraphql(params: {
   apiVersion?: string;
 }): Promise<any[]> {
   const apiVersion = params.apiVersion ?? "2024-01";
-  const shopify = createShopifyClient({ shopDomain: params.shop, accessToken: params.accessToken });
+  const shopify = createShopifyClient({
+    shopDomain: params.shop,
+    accessToken: params.accessToken,
+  });
 
   const sinceIso = isoSince(params.days);
   const query = ordersQueryString({ sinceIso });
@@ -250,11 +333,15 @@ export async function fetchOrdersGraphql(params: {
   let after: string | null = null;
 
   for (;;) {
-    const data: OrdersQueryData = await shopify.graphql<OrdersQueryData>(path, ORDERS_QUERY, {
-      first: 250,
-      after,
-      query,
-    });
+    const data: OrdersQueryData = await shopify.graphql<OrdersQueryData>(
+      path,
+      ORDERS_QUERY,
+      {
+        first: 250,
+        after,
+        query,
+      }
+    );
 
     const edges = data?.orders?.edges ?? [];
     for (const e of edges) out.push(toRestLikeOrder(e.node));
@@ -276,12 +363,20 @@ export async function fetchOrderByIdGraphql(params: {
   apiVersion?: string;
 }): Promise<any | null> {
   const apiVersion = params.apiVersion ?? "2024-01";
-  const shopify = createShopifyClient({ shopDomain: params.shop, accessToken: params.accessToken });
+  const shopify = createShopifyClient({
+    shopDomain: params.shop,
+    accessToken: params.accessToken,
+  });
 
   const gid = `gid://shopify/Order/${String(params.orderId).trim()}`;
   const path = `/admin/api/${apiVersion}/graphql.json`;
 
-  const data: OrderByIdData = await shopify.graphql<OrderByIdData>(path, ORDER_BY_ID_QUERY, { id: gid });
+  const data: OrderByIdData = await shopify.graphql<OrderByIdData>(
+    path,
+    ORDER_BY_ID_QUERY,
+    { id: gid }
+  );
+
   if (!data?.order) return null;
 
   return toRestLikeOrder(data.order);
