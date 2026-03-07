@@ -1,4 +1,3 @@
-// src/domain/insights/profitKillers.orders.ts
 import { round2 } from "../../utils/money.js";
 import { safeDiv, computeOrderReasons } from "./utils.js";
 
@@ -16,9 +15,15 @@ export function enrichOrdersWithReasons(orders: Array<any>) {
       ...o,
       refundRatePct: round2(refundRatePct),
       feeRatePct: round2(feeRatePct),
-      reasons: computeOrderReasons(o),
+
+      // ✅ Gift-card-only orders must not create operational order reasons
+      reasons: o?.isGiftCardOnlyOrder ? [] : computeOrderReasons(o),
     };
   });
+}
+
+function isOperationalOrder(o: any): boolean {
+  return !Boolean(o?.isGiftCardOnlyOrder);
 }
 
 function orderProfitValue(o: any): number {
@@ -27,12 +32,14 @@ function orderProfitValue(o: any): number {
 
 export function pickWorstOrders(ordersWithReasons: Array<any>, limit: number) {
   return [...ordersWithReasons]
+    .filter(isOperationalOrder)
     .sort((a, b) => orderProfitValue(a) - orderProfitValue(b))
     .slice(0, limit);
 }
 
 export function pickBestOrders(ordersWithReasons: Array<any>, limit: number) {
   return [...ordersWithReasons]
+    .filter(isOperationalOrder)
     .sort((a, b) => orderProfitValue(b) - orderProfitValue(a))
     .slice(0, limit);
 }

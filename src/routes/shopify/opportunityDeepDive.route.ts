@@ -124,6 +124,10 @@ export function registerOpportunityDeepDiveRoute(app: FastifyInstance, ctx: Shop
           contributionMargin: p.contributionMargin,
           contributionMarginPct: p.contributionMarginPct,
 
+          // ✅ Gift-card governance facts
+          isGiftCardOnlyOrder: p.isGiftCardOnlyOrder,
+          giftCardNetSalesExcluded: p.giftCardNetSalesExcluded,
+
           shippingRevenue: p.shippingRevenue,
           shippingCost: p.shippingCost,
           shippingImpact: p.shippingImpact,

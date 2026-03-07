@@ -109,6 +109,10 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
           contributionMargin: p.contributionMargin,
           contributionMarginPct: p.contributionMarginPct,
 
+          // ✅ Gift-card governance facts
+          isGiftCardOnlyOrder: p.isGiftCardOnlyOrder,
+          giftCardNetSalesExcluded: p.giftCardNetSalesExcluded,
+
           shippingRevenue: p.shippingRevenue,
           shippingCost: p.shippingCost,
           shippingImpact: p.shippingImpact,

@@ -13,6 +13,10 @@ export type OrderProfitRow = {
   contributionMargin: number;
   contributionMarginPct: number;
 
+  // ✅ Gift-card governance facts
+  isGiftCardOnlyOrder?: boolean;
+  giftCardNetSalesExcluded?: number;
+
   // Shipping (optional, but you already send it in many places)
   shippingRevenue?: number;
   shippingCost?: number;

@@ -24,6 +24,9 @@ export type OrderForImpact = {
   // ✅ Optional: Profit after ads (allocated)
   profitAfterAds?: number;
 
+  // ✅ Gift-card governance fact
+  isGiftCardOnlyOrder?: boolean;
+
   reasons: Reason[];
 };
 
@@ -166,6 +169,10 @@ function selectedProfitPct(o: OrderForImpact, basis: "BEFORE_ADS" | "AFTER_ADS")
   return net > 0 ? (p / net) * 100 : 0;
 }
 
+function isOperationalOrder(o: OrderForImpact): boolean {
+  return !Boolean((o as any).isGiftCardOnlyOrder);
+}
+
 export function buildProfitImpact(params: {
   days: number;
   currency: string;
@@ -188,23 +195,26 @@ export function buildProfitImpact(params: {
 
   const opportunities: Opportunity[] = [];
 
+  // ✅ Gift-card-only orders must not drive operational opportunities
+  const operationalOrders = orders.filter(isOperationalOrder);
+
   const refundRatePct = safeDiv(totals.refunds, totals.grossSales) * 100;
   const feeRatePct = safeDiv(totals.paymentFees, totals.netAfterRefunds) * 100;
 
   // Basis selection: AFTER_ADS if available, else BEFORE_ADS
-  const basis = detectBasis(orders);
+   const basis = detectBasis(operationalOrders);
 
   // Compute totals profit pct for LOW_MARGIN basis
   const totalSelectedProfit =
     basis === "AFTER_ADS" && Number.isFinite(Number(totals.profitAfterAds))
       ? Number(totals.profitAfterAds)
-      : orders.reduce((s, o) => s + selectedProfit(o, basis), 0);
+            : operationalOrders.reduce((s, o) => s + selectedProfit(o, basis), 0);
 
   const totalSelectedProfitPct =
     totals.netAfterRefunds > 0 ? (totalSelectedProfit / totals.netAfterRefunds) * 100 : 0;
 
   // Helpers for evidence (always computed from per-order values)
-  const ordersByRefundPct = [...orders]
+    const ordersByRefundPct = [...operationalOrders]
     .filter((o) => Number(o.grossSales || 0) > 0 && Number(o.refunds || 0) > 0)
     .map((o) => ({
       ...o,
@@ -212,7 +222,7 @@ export function buildProfitImpact(params: {
     }))
     .sort((a, b) => (b.refundPct ?? 0) - (a.refundPct ?? 0));
 
-  const ordersByFeePct = [...orders]
+    const ordersByFeePct = [...operationalOrders]
     .filter((o) => Number(o.netAfterRefunds || 0) > 0 && Number(o.paymentFees || 0) > 0)
     .map((o) => ({
       ...o,
@@ -220,7 +230,7 @@ export function buildProfitImpact(params: {
     }))
     .sort((a, b) => (b.feePct ?? 0) - (a.feePct ?? 0));
 
-  const ordersByLowMargin = [...orders]
+    const ordersByLowMargin = [...operationalOrders]
     .filter((o) => Number(o.netAfterRefunds || 0) > 0)
     .map((o) => ({
       ...o,
@@ -309,7 +319,7 @@ export function buildProfitImpact(params: {
   // ----------------------------
   // NEGATIVE_CM (✅ basis-aware; becomes "negative after ads" when available)
   // ----------------------------
-  const negativeOrders = orders
+    const negativeOrders = operationalOrders
     .filter((o) => selectedProfit(o, basis) < 0)
     .sort((a, b) => selectedProfit(a, basis) - selectedProfit(b, basis));
 
@@ -342,12 +352,14 @@ export function buildProfitImpact(params: {
   // ----------------------------
   // MISSING_COGS (unchanged)
   // ----------------------------
-  const missingOrders = orders.filter((o) => (o.reasons ?? []).includes("MISSING_COGS"));
+  const missingOrders = operationalOrders.filter((o) => (o.reasons ?? []).includes("MISSING_COGS"));
 
   if (missingOrders.length > 0) {
     const netMissing = missingOrders.reduce((s, o) => s + Number(o.netAfterRefunds || 0), 0);
 
-    const knownOrders = orders.filter((o) => Number(o.netAfterRefunds || 0) > 0 && Number(o.cogs || 0) > 0);
+      const knownOrders = operationalOrders.filter(
+      (o) => Number(o.netAfterRefunds || 0) > 0 && Number(o.cogs || 0) > 0
+    );
 
     const knownNet = knownOrders.reduce((s, o) => s + Number(o.netAfterRefunds || 0), 0);
     const knownCogs = knownOrders.reduce((s, o) => s + Number(o.cogs || 0), 0);

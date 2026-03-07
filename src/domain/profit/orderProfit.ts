@@ -53,7 +53,7 @@ export async function calculateOrderProfit(params: {
   // If excludeGiftCards=true, gift-card-only orders are excluded from KPIs (fees/CM/etc = 0),
   // but raw values remain visible (grossSales/refunds/shippingRevenue).
   const excludeGiftCards = Boolean((costProfile as any)?.flags?.excludeGiftCards ?? false);
-  const excludeGiftCardOnlyFromKpis = isGiftCardOnlyOrder && excludeGiftCards;
+ const excludeGiftCardOnlyFromKpis = isGiftCardOnlyOrder && excludeGiftCards;
 
   // Gift card transparency (always)
   const giftCardNetSalesExcluded = isGiftCardOnlyOrder ? rawNetAfterRefunds : 0;
