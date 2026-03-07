@@ -1,4 +1,3 @@
-// src/domain/profit/variants.ts
 import type { VariantQty } from "../cogs.js";
 
 function toNum(v: any): number {
@@ -32,16 +31,33 @@ function parseStrictBool(v: any): boolean {
     const s = v.trim().toLowerCase();
     if (s === "true" || s === "1") return true;
     if (s === "false" || s === "0" || s === "") return false;
-    return false; // safe default
+    return false;
   }
 
   return false;
 }
 
+function looksLikeGiftCardByTitle(li: any): boolean {
+  const title = String(li?.title ?? li?.name ?? "").trim().toLowerCase();
+  const variantTitle = String(li?.variant_title ?? li?.variantTitle ?? li?.variant?.title ?? "").trim().toLowerCase();
+
+  if (!title && !variantTitle) return false;
+
+  if (title === "gift card") return true;
+  if (title.includes("gift card")) return true;
+  if (variantTitle.includes("gift card")) return true;
+
+  return false;
+}
+
 function isGiftCardLike(li: any): boolean {
-  // REST: gift_card
-  // GraphQL (sometimes): giftCard
-  return parseStrictBool(li?.gift_card ?? li?.giftCard ?? false);
+  // Primary signal
+  if (parseStrictBool(li?.gift_card ?? li?.giftCard ?? false)) return true;
+
+  // Defensive fallback for normalized GraphQL payloads where explicit gift_card is absent
+  if (looksLikeGiftCardByTitle(li)) return true;
+
+  return false;
 }
 
 /**
@@ -57,7 +73,6 @@ export type OrderLineItemFacts = {
   relevantLineItemsCount: number;
   extractedVariantQty: VariantQty[];
   hasUnmappedVariants: boolean;
-
   giftCardLineItemsCount: number;
 };
 
@@ -84,13 +99,21 @@ function normalizeArrayLineItems(
       parseGidToId(li?.variantId) ||
       0;
 
-    const qty = toNum(li?.quantity) || toNum(li?.qty) || toNum(li?.currentQuantity) || 0;
+    const qty =
+      toNum(li?.quantity) ||
+      toNum(li?.qty) ||
+      toNum(li?.currentQuantity) ||
+      0;
 
     push(out, variantId, qty);
   }
 }
 
-function normalizeGraphqlLineItems(conn: any, out: VariantQty[], counts: { raw: number; relevant: number; gift: number }) {
+function normalizeGraphqlLineItems(
+  conn: any,
+  out: VariantQty[],
+  counts: { raw: number; relevant: number; gift: number }
+) {
   const edges = conn?.edges ?? [];
   for (const e of edges) {
     const node = e?.node ?? e ?? {};
@@ -105,8 +128,16 @@ function normalizeGraphqlLineItems(conn: any, out: VariantQty[], counts: { raw: 
 
     counts.relevant += 1;
 
-    const variantId = parseGidToId(node?.variant?.id) || toNum(node?.variantId) || 0;
-    const qty = toNum(node?.quantity) || toNum(node?.currentQuantity) || toNum(node?.qty) || 0;
+    const variantId =
+      parseGidToId(node?.variant?.id) ||
+      toNum(node?.variantId) ||
+      0;
+
+    const qty =
+      toNum(node?.quantity) ||
+      toNum(node?.currentQuantity) ||
+      toNum(node?.qty) ||
+      0;
 
     push(out, variantId, qty);
   }
@@ -129,15 +160,22 @@ function normalizeGraphqlLineItemsNodes(
 
     counts.relevant += 1;
 
-    const variantId = parseGidToId(node?.variant?.id) || toNum(node?.variantId) || 0;
-    const qty = toNum(node?.quantity) || toNum(node?.currentQuantity) || toNum(node?.qty) || 0;
+    const variantId =
+      parseGidToId(node?.variant?.id) ||
+      toNum(node?.variantId) ||
+      0;
+
+    const qty =
+      toNum(node?.quantity) ||
+      toNum(node?.currentQuantity) ||
+      toNum(node?.qty) ||
+      0;
 
     push(out, variantId, qty);
   }
 }
 
 function dedupeVariantQty(out: VariantQty[]): VariantQty[] {
-  // Merge duplicate variantIds (same variant appears multiple times)
   const agg = new Map<number, number>();
   for (const x of out) agg.set(x.variantId, (agg.get(x.variantId) ?? 0) + x.qty);
   return Array.from(agg.entries()).map(([variantId, qty]) => ({ variantId, qty }));
@@ -170,14 +208,14 @@ export function getOrderLineItemFacts(order: any): OrderLineItemFacts {
   const out: VariantQty[] = [];
   const counts = { raw: 0, relevant: 0, gift: 0 };
 
-  // GraphQL nodes shape (common in Shopify GraphQL)
+  // GraphQL nodes shape
   if (order?.lineItems?.nodes) normalizeGraphqlLineItemsNodes(order.lineItems, out, counts);
   if (order?.line_items?.nodes) normalizeGraphqlLineItemsNodes(order.line_items, out, counts);
 
   // REST shape
   if (Array.isArray(order?.line_items)) normalizeArrayLineItems(order.line_items, out, counts);
 
-  // Some code/fixtures use camelCase
+  // camelCase array shape
   if (Array.isArray(order?.lineItems)) normalizeArrayLineItems(order.lineItems, out, counts);
 
   // GraphQL connection shape
@@ -186,8 +224,6 @@ export function getOrderLineItemFacts(order: any): OrderLineItemFacts {
 
   const extractedVariantQty = dedupeVariantQty(out);
 
-  // ✅ Invariante für "unmapped variants":
-  // Wenn relevante Items existieren, aber keine Variant IDs extrahiert werden konnten => missing
   const hasUnmappedVariants = counts.relevant > 0 && extractedVariantQty.length === 0;
 
   return {
@@ -199,12 +235,12 @@ export function getOrderLineItemFacts(order: any): OrderLineItemFacts {
   };
 }
 
-// Backwards compatible helper (still useful sometimes)
+// Backwards compatible helper
 export function getRawLineItemCount(order: any): number {
   return getOrderLineItemFacts(order).rawLineItemsCount;
 }
 
-// New helper (explicit)
+// Explicit helper
 export function getRelevantLineItemCount(order: any): number {
   return getOrderLineItemFacts(order).relevantLineItemsCount;
 }
