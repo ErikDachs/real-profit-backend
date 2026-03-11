@@ -13,7 +13,7 @@
           <p class="eyebrow">ProfitLens Analytics</p>
           <h1>Real Profit Dashboard</h1>
           <p class="subtitle">
-            Merchant-facing profit view powered entirely by backend-calculated metrics.
+            Merchant-facing profit visibility powered entirely by backend-calculated metrics.
           </p>
         </div>
 
@@ -23,33 +23,40 @@
         </div>
       </header>
 
-      <main>
-        <section class="status-row">
-          <div class="status-card">
-            <span class="status-label">Period</span>
-            <strong id="periodLabel">Last 30 days</strong>
-          </div>
-          <div class="status-card">
-            <span class="status-label">Currency</span>
-            <strong id="currencyLabel">USD</strong>
-          </div>
-          <div class="status-card">
-            <span class="status-label">Cost Model</span>
-            <strong id="fingerprintLabel">—</strong>
-          </div>
-        </section>
+      <section class="status-row">
+        <div class="status-card">
+          <span class="status-label">Period</span>
+          <strong id="periodLabel">Last 30 days</strong>
+        </div>
+        <div class="status-card">
+          <span class="status-label">Currency</span>
+          <strong id="currencyLabel">USD</strong>
+        </div>
+        <div class="status-card">
+          <span class="status-label">Cost Model</span>
+          <strong id="fingerprintLabel">—</strong>
+        </div>
+      </section>
 
-        <section id="loadingState" class="panel state-panel">
-          <div class="loader"></div>
-          <p>Loading profit metrics…</p>
-        </section>
+      <nav class="tabs" aria-label="Dashboard sections">
+        <button class="tab-btn active" data-tab="overview" type="button">Overview</button>
+        <button class="tab-btn" data-tab="insights" type="button">Insights</button>
+        <button class="tab-btn" data-tab="orders" type="button">Orders</button>
+      </nav>
 
-        <section id="errorState" class="panel state-panel hidden">
-          <h2>Could not load dashboard</h2>
-          <p id="errorMessage">Unknown error.</p>
-        </section>
+      <section id="loadingState" class="panel state-panel">
+        <div class="loader"></div>
+        <p>Loading profit metrics…</p>
+      </section>
 
-        <section id="dashboardContent" class="hidden">
+      <section id="errorState" class="panel state-panel hidden">
+        <h2>Could not load dashboard</h2>
+        <p id="errorMessage">Unknown error.</p>
+      </section>
+
+      <section id="appContent" class="hidden">
+        <!-- OVERVIEW -->
+        <section class="tab-panel active" id="tab-overview">
           <section class="kpi-grid">
             <article class="panel kpi-card">
               <span class="kpi-label">Orders analyzed</span>
@@ -134,7 +141,111 @@
             </article>
           </section>
         </section>
-      </main>
+
+        <!-- INSIGHTS -->
+        <section class="tab-panel" id="tab-insights">
+          <section class="insights-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Top opportunities</h2>
+              </div>
+              <div class="stack-list" id="opportunitiesList">
+                <div class="empty-state">No opportunities loaded.</div>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Top actions</h2>
+              </div>
+              <div class="stack-list" id="actionsList">
+                <div class="empty-state">No actions loaded.</div>
+              </div>
+            </article>
+          </section>
+
+          <section class="details-grid insights-bottom">
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Profit signals</h2>
+              </div>
+              <div class="metric-list">
+                <div class="metric-row">
+                  <span>Shipping subsidy detected</span>
+                  <strong id="shippingSubsidyValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Margin drift detected</span>
+                  <strong id="marginDriftValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Break-even risk detected</span>
+                  <strong id="breakEvenRiskValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Health status</span>
+                  <strong id="healthStatusInsightsValue">—</strong>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Opportunity summary</h2>
+              </div>
+              <div class="metric-list">
+                <div class="metric-row">
+                  <span>Total opportunities shown</span>
+                  <strong id="opportunityCountValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Total actions shown</span>
+                  <strong id="actionCountValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Store health score</span>
+                  <strong id="healthScoreInsightsValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Currency</span>
+                  <strong id="currencyInsightsValue">—</strong>
+                </div>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <!-- ORDERS -->
+        <section class="tab-panel" id="tab-orders">
+          <article class="panel">
+            <div class="panel-head panel-head-split">
+              <h2>Order profit detail</h2>
+              <div class="panel-subhead" id="ordersPanelMeta">Last 30 days</div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th>Created</th>
+                    <th>Net after refunds</th>
+                    <th>COGS</th>
+                    <th>Payment fees</th>
+                    <th>Contribution margin</th>
+                    <th>Break-even ROAS</th>
+                  </tr>
+                </thead>
+                <tbody id="ordersTableBody">
+                  <tr>
+                    <td colspan="7" class="empty-table">No orders loaded.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      </section>
     </div>
 
     <script src="/app.js" defer></script>
