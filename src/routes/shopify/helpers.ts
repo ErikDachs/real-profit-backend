@@ -4,15 +4,16 @@ import type { CogsService } from "../../domain/cogs.js";
 import { extractVariantQtyFromOrder } from "../../domain/profit/variants.js";
 import type { CostProfileOverrides } from "../../domain/costModel/types.js";
 import { costOverridesFromAny } from "../../domain/costModel/resolve.js";
-import { isValidShopDomain } from "../../storage/shopsStore.js";
+import { isValidShopDomain, normalizeShopDomain } from "../../storage/shopsStore.js";
 
 export function parseShop(query: any, fallback?: string): string {
-  const shopRaw = query?.shop;
-  const shop = shopRaw === undefined || shopRaw === null ? (fallback ?? "") : String(shopRaw);
-  const s = shop.trim().toLowerCase();
-  if (!s) return fallback ?? "";
-  if (!isValidShopDomain(s)) return ""; // caller can 400
-  return s;
+  const raw = query?.shop ?? fallback ?? "";
+  const shop = normalizeShopDomain(raw);
+
+  if (!shop) return "";
+  if (!isValidShopDomain(shop)) return "";
+
+  return shop;
 }
 
 export function parseDays(query: any, fallback = 30): number {

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ProfitLens Analytics</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ProfitLens Analytics</p>
+          <h1>Real Profit Dashboard</h1>
+          <p class="subtitle">
+            Merchant-facing profit view powered entirely by backend-calculated metrics.
+          </p>
+        </div>
+
+        <div class="topbar-right">
+          <div class="shop-chip" id="shopChip">Shop: —</div>
+          <button class="refresh-btn" id="refreshBtn" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="status-row">
+          <div class="status-card">
+            <span class="status-label">Period</span>
+            <strong id="periodLabel">Last 30 days</strong>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Currency</span>
+            <strong id="currencyLabel">USD</strong>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Cost Model</span>
+            <strong id="fingerprintLabel">—</strong>
+          </div>
+        </section>
+
+        <section id="loadingState" class="panel state-panel">
+          <div class="loader"></div>
+          <p>Loading profit metrics…</p>
+        </section>
+
+        <section id="errorState" class="panel state-panel hidden">
+          <h2>Could not load dashboard</h2>
+          <p id="errorMessage">Unknown error.</p>
+        </section>
+
+        <section id="dashboardContent" class="hidden">
+          <section class="kpi-grid">
+            <article class="panel kpi-card">
+              <span class="kpi-label">Orders analyzed</span>
+              <strong class="kpi-value" id="ordersValue">—</strong>
+              <span class="kpi-note">Orders included in the selected period</span>
+            </article>
+
+            <article class="panel kpi-card">
+              <span class="kpi-label">Contribution margin</span>
+              <strong class="kpi-value" id="contributionValue">—</strong>
+              <span class="kpi-note" id="contributionPctValue">—</span>
+            </article>
+
+            <article class="panel kpi-card">
+              <span class="kpi-label">Break-even ROAS</span>
+              <strong class="kpi-value" id="roasValue">—</strong>
+              <span class="kpi-note">Revenue / ad spend threshold</span>
+            </article>
+
+            <article class="panel kpi-card">
+              <span class="kpi-label">Net after refunds</span>
+              <strong class="kpi-value" id="netAfterRefundsValue">—</strong>
+              <span class="kpi-note" id="refundsValue">Refunds: —</span>
+            </article>
+          </section>
+
+          <section class="details-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Profit overview</h2>
+              </div>
+              <div class="metric-list">
+                <div class="metric-row">
+                  <span>Gross sales</span>
+                  <strong id="grossSalesValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Refunds</span>
+                  <strong id="refundsInlineValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Net after refunds</span>
+                  <strong id="netAfterRefundsInlineValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>COGS</span>
+                  <strong id="cogsValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Payment fees</span>
+                  <strong id="paymentFeesValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Profit after shipping</span>
+                  <strong id="profitAfterShippingValue">—</strong>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Store health</h2>
+              </div>
+              <div class="metric-list">
+                <div class="metric-row">
+                  <span>Health score</span>
+                  <strong id="healthScoreValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Status</span>
+                  <strong id="healthStatusValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Top opportunities</span>
+                  <strong id="opportunitiesValue">—</strong>
+                </div>
+                <div class="metric-row">
+                  <span>Top actions</span>
+                  <strong id="actionsValue">—</strong>
+                </div>
+              </div>
+            </article>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

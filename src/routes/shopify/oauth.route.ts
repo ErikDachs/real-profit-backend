@@ -1,4 +1,3 @@
-// src/routes/shopify/oauth.route.ts
 import type { FastifyInstance } from "fastify";
 import {
   ShopsStore,
@@ -53,8 +52,6 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
   const appUrl = String(app.config.APP_URL || "").trim();
 
   const redirectUri = `${appUrl.replace(/\/$/, "")}/api/shopify/oauth/callback`;
-
-  // Keep API version deterministic & aligned with your ctx.ts usage.
   const apiVersion = "2024-01";
 
   app.get<{ Querystring: OAuthInstallQuery }>("/api/shopify/oauth/install", async (req, reply) => {
@@ -104,21 +101,27 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
       const code = String(req.query.code || "").trim();
       const state = String(req.query.state || "").trim();
 
-      if (!isValidShopDomain(shop)) throw new ShopifyOAuthError("Invalid shop domain", "INVALID_SHOP", 400);
-      if (!code) throw new ShopifyOAuthError("Missing code", "MISSING_PARAM", 400);
-      if (!state) throw new ShopifyOAuthError("Missing state", "MISSING_PARAM", 400);
+      if (!isValidShopDomain(shop)) {
+        throw new ShopifyOAuthError("Invalid shop domain", "INVALID_SHOP", 400);
+      }
+      if (!code) {
+        throw new ShopifyOAuthError("Missing code", "MISSING_PARAM", 400);
+      }
+      if (!state) {
+        throw new ShopifyOAuthError("Missing state", "MISSING_PARAM", 400);
+      }
 
       const ok = verifyShopifyQueryHmac({ query: req.query as any, apiSecret });
-      if (!ok) throw new ShopifyOAuthError("Invalid HMAC", "HMAC_INVALID", 401);
+      if (!ok) {
+        throw new ShopifyOAuthError("Invalid HMAC", "HMAC_INVALID", 401);
+      }
 
       await shopsStore.consumePendingOAuthState({ shop, state });
 
       const tok = await exchangeCodeForAccessToken({ shop, apiKey, apiSecret, code });
       await shopsStore.upsertToken({ shop, accessToken: tok.access_token, scope: tok.scope ?? null });
 
-      // ✅ Register only REST-supported webhook(s) after install.
-      // Compliance topics are handled by your webhook endpoint but are not registered here.
-      const reg = await registerWebhooksAfterInstall({
+      await registerWebhooksAfterInstall({
         shop,
         accessToken: tok.access_token,
         apiVersion,
@@ -126,13 +129,7 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
       });
 
       reply.header("Cache-Control", "no-store");
-      return {
-        ok: true,
-        shop,
-        scope: tok.scope ?? null,
-        webhooks: reg,
-        next: `/api/orders/profit?shop=${encodeURIComponent(shop)}&days=30`,
-      };
+      return reply.redirect(`/app?shop=${encodeURIComponent(shop)}`);
     } catch (e: any) {
       if (e instanceof ShopsStoreError) {
         reply.status(e.status);
@@ -144,7 +141,6 @@ export async function registerShopifyOAuthRoutes(app: FastifyInstance) {
     }
   });
 
-  // ✅ Optional debug endpoint: shows persisted shops, token masked
   app.get("/api/shopify/debug/shops", async (_req, reply) => {
     try {
       const rows = await shopsStore.listMasked();

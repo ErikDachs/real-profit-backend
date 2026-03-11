@@ -8,12 +8,10 @@ export type ActionStatus = "OPEN" | "IN_PROGRESS" | "DONE" | "DISMISSED";
 export type ActionStateRecord = {
   actionId: string;
   status: ActionStatus;
-
   note?: string | null;
-  dueDate?: string | null; // ISO date or ISO datetime
+  dueDate?: string | null;
   dismissedReason?: string | null;
-
-  updatedAt: string; // ISO
+  updatedAt: string;
 };
 
 type FileShapeV1 = {
@@ -55,6 +53,7 @@ function normalizeStatus(x: any): ActionStatus {
 export class ActionPlanStateStore {
   private loaded = false;
   private file: FileShapeV1 | null = null;
+  private lastMtimeMs: number | null = null;
 
   constructor(private params: { shop: string; dataDir?: string }) {
     const shop = normalizeShopDomain(params.shop);
@@ -69,16 +68,24 @@ export class ActionPlanStateStore {
     return path.join(dir, `actionPlanState.${this.params.shop}.json`);
   }
 
-  async ensureLoaded() {
-    if (this.loaded) return;
-    this.loaded = true;
+  private async readMtime(): Promise<number | null> {
+    try {
+      const st = await fs.stat(this.filePath());
+      return st.mtimeMs;
+    } catch {
+      return null;
+    }
+  }
 
+  private async loadFromDisk() {
     try {
       const raw = await fs.readFile(this.filePath(), "utf-8");
       const parsed = JSON.parse(raw);
 
       if (!parsed || typeof parsed !== "object" || parsed.version !== 1) {
         this.file = null;
+        this.loaded = true;
+        this.lastMtimeMs = await this.readMtime();
         return;
       }
 
@@ -92,7 +99,6 @@ export class ActionPlanStateStore {
         const status = normalizeStatus(r?.status);
         const note = clampNote(r?.note);
         const dismissedReason = clampReason(r?.dismissedReason);
-
         const dueDate = r?.dueDate && isIsoLike(r?.dueDate) ? String(r?.dueDate) : null;
         const updatedAt = r?.updatedAt && isIsoLike(r?.updatedAt) ? String(r?.updatedAt) : nowIso();
 
@@ -108,12 +114,42 @@ export class ActionPlanStateStore {
 
       this.file = {
         version: 1,
-        shop: String(parsed.shop ?? this.params.shop),
+        shop: normalizeShopDomain(parsed.shop ?? this.params.shop),
         updatedAt: String(parsed.updatedAt ?? nowIso()),
         states,
       };
+
+      this.loaded = true;
+      this.lastMtimeMs = await this.readMtime();
     } catch {
       this.file = null;
+      this.loaded = true;
+      this.lastMtimeMs = await this.readMtime();
+    }
+  }
+
+  async ensureLoaded() {
+    if (this.loaded) return;
+    await this.loadFromDisk();
+  }
+
+  async ensureFresh() {
+    await this.ensureLoaded();
+
+    const mt = await this.readMtime();
+
+    if (this.lastMtimeMs === null && mt === null) return;
+    if (this.lastMtimeMs === null && mt !== null) {
+      await this.loadFromDisk();
+      return;
+    }
+    if (this.lastMtimeMs !== null && mt === null) {
+      this.file = null;
+      this.lastMtimeMs = null;
+      return;
+    }
+    if (mt !== this.lastMtimeMs) {
+      await this.loadFromDisk();
     }
   }
 
@@ -128,7 +164,7 @@ export class ActionPlanStateStore {
   }
 
   async list(): Promise<ActionStateRecord[]> {
-    await this.ensureLoaded();
+    await this.ensureFresh();
     const states = this.file?.states ?? {};
     return Object.values(states).sort((a, b) => String(a.actionId).localeCompare(String(b.actionId)));
   }
@@ -136,12 +172,11 @@ export class ActionPlanStateStore {
   async upsert(params: {
     actionId: string;
     status?: ActionStatus | null;
-
     note?: string | null;
     dueDate?: string | null;
     dismissedReason?: string | null;
   }): Promise<ActionStateRecord> {
-    await this.ensureLoaded();
+    await this.ensureFresh();
 
     const actionId = String(params.actionId || "").trim();
     if (!actionId) throw new Error("actionId is required");
@@ -149,7 +184,9 @@ export class ActionPlanStateStore {
     const prev = this.getStateSync(actionId);
 
     const nextStatus =
-      params.status === undefined || params.status === null ? prev?.status ?? "OPEN" : normalizeStatus(params.status);
+      params.status === undefined || params.status === null
+        ? prev?.status ?? "OPEN"
+        : normalizeStatus(params.status);
 
     const nextNote = params.note === undefined ? prev?.note ?? null : clampNote(params.note);
 
@@ -161,7 +198,9 @@ export class ActionPlanStateStore {
           : null;
 
     const nextDismissReason =
-      params.dismissedReason === undefined ? prev?.dismissedReason ?? null : clampReason(params.dismissedReason);
+      params.dismissedReason === undefined
+        ? prev?.dismissedReason ?? null
+        : clampReason(params.dismissedReason);
 
     const dismissedReason = nextStatus === "DISMISSED" ? nextDismissReason ?? null : null;
 
@@ -192,22 +231,19 @@ export class ActionPlanStateStore {
   }
 
   async clear(actionId: string): Promise<void> {
-    await this.ensureLoaded();
+    await this.ensureFresh();
+
     const id = String(actionId || "").trim();
     if (!id) return;
-
     if (!this.file?.states?.[id]) return;
+
     delete this.file.states[id];
     this.file.updatedAt = nowIso();
     await this.persist();
   }
 
-  /**
-   * ✅ PCD: clear ALL action plan state for this shop.
-   * Idempotent.
-   */
   async clearAll(): Promise<void> {
-    await this.ensureLoaded();
+    await this.ensureFresh();
     this.file = null;
 
     try {
@@ -215,6 +251,8 @@ export class ActionPlanStateStore {
     } catch {
       // ignore
     }
+
+    this.lastMtimeMs = await this.readMtime();
   }
 
   private async persist(): Promise<void> {
@@ -233,5 +271,7 @@ export class ActionPlanStateStore {
     const tmp = `${fp}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(payload, null, 2), "utf-8");
     await fs.rename(tmp, fp);
+
+    this.lastMtimeMs = await this.readMtime();
   }
 }

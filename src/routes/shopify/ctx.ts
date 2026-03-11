@@ -1,3 +1,4 @@
+// src/routes/shopify/ctx.ts
 import { FastifyInstance } from "fastify";
 import { createShopifyClient } from "../../integrations/shopify/client.js";
 import { fetchOrdersGraphql, fetchOrderByIdGraphql } from "../../integrations/shopify/ordersGraphql.js";
@@ -15,37 +16,27 @@ import { CostModelOverridesStore } from "../../storage/costModelOverridesStore.j
 import { ActionPlanStateStore } from "../../storage/actionPlanStateStore.js";
 
 export type ShopifyCtx = {
-  // legacy single-shop (keeps existing routes/tests working)
   shop: string;
   shopify: ReturnType<typeof createShopifyClient>;
 
-  // token store + helpers for multi-shop
   shopsStore: ShopsStore;
   createShopifyForShop: (shop: string) => Promise<ReturnType<typeof createShopifyClient>>;
   fetchOrdersForShop: (shop: string, days: number) => Promise<any[]>;
   fetchOrderByIdForShop: (shop: string, orderId: string) => Promise<any>;
 
-  // ✅ shop-scoped COGS
   getCogsOverridesStoreForShop: (shop: string) => Promise<CogsOverridesStore>;
   getCogsServiceForShop: (shop: string) => Promise<CogsService>;
-
-  // ✅ shop-scoped Cost Model
   getCostModelOverridesStoreForShop: (shop: string) => Promise<CostModelOverridesStore>;
-
-  // ✅ shop-scoped Action State
   getActionPlanStateStoreForShop: (shop: string) => Promise<ActionPlanStateStore>;
 
-  // legacy single-shop instances
   cogsOverridesStore: CogsOverridesStore;
   cogsService: CogsService;
   costModelOverridesStore: CostModelOverridesStore;
   actionPlanStateStore: ActionPlanStateStore;
 
-  // legacy single-shop methods
   fetchOrders: (days: number) => Promise<any[]>;
   fetchOrderById: (orderId: string) => Promise<any>;
 
-  // base-from-config (deterministic)
   costProfile: CostProfile;
 };
 
@@ -75,6 +66,48 @@ function redactOrderPII(order: any): any {
   return clone;
 }
 
+function makeDisabledCogsOverridesStore(): CogsOverridesStore {
+  return {
+    ensureLoaded: async () => {},
+    ensureFresh: async () => {},
+    list: async () => [],
+    upsert: async () => {
+      throw Object.assign(new Error("Legacy single-shop COGS store disabled: SHOPIFY_STORE_DOMAIN missing"), { status: 400 });
+    },
+    clearAll: async () => {},
+    getUnitCostSync: () => undefined,
+    isIgnoredSync: () => false,
+  } as any;
+}
+
+function makeDisabledCostModelOverridesStore(): CostModelOverridesStore {
+  return {
+    ensureLoaded: async () => {},
+    ensureFresh: async () => {},
+    getOverridesSync: () => undefined,
+    getUpdatedAtSync: () => undefined,
+    setOverrides: async () => {
+      throw Object.assign(new Error("Legacy single-shop cost model store disabled: SHOPIFY_STORE_DOMAIN missing"), { status: 400 });
+    },
+    clear: async () => {},
+  } as any;
+}
+
+function makeDisabledActionPlanStateStore(): ActionPlanStateStore {
+  return {
+    ensureLoaded: async () => {},
+    ensureFresh: async () => {},
+    getUpdatedAtSync: () => null,
+    getStateSync: () => null,
+    list: async () => [],
+    upsert: async () => {
+      throw Object.assign(new Error("Legacy single-shop action state store disabled: SHOPIFY_STORE_DOMAIN missing"), { status: 400 });
+    },
+    clear: async () => {},
+    clearAll: async () => {},
+  } as any;
+}
+
 export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx> {
   const legacyShop = normalizeShopDomain(app.config.SHOPIFY_STORE_DOMAIN || "");
   const legacyToken = String(app.config.SHOPIFY_ADMIN_TOKEN || "").trim();
@@ -84,20 +117,9 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
 
   const apiVersion = String((app.config as any).SHOPIFY_API_VERSION || "2024-01");
 
-  // -----------------------------
-  // ✅ Multi-shop COGS isolation
-  // -----------------------------
   const cogsOverridesByShop = new Map<string, CogsOverridesStore>();
   const cogsServiceByShop = new Map<string, CogsService>();
-
-  // -----------------------------
-  // ✅ Multi-shop Cost Model isolation
-  // -----------------------------
   const costModelOverridesByShop = new Map<string, CostModelOverridesStore>();
-
-  // -----------------------------
-  // ✅ Multi-shop Action State isolation
-  // -----------------------------
   const actionPlanStateByShop = new Map<string, ActionPlanStateStore>();
 
   async function getCogsOverridesStoreForShop(shopInput: string) {
@@ -107,7 +129,10 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     }
 
     const hit = cogsOverridesByShop.get(shop);
-    if (hit) return hit;
+    if (hit) {
+      await (hit as any).ensureFresh?.();
+      return hit;
+    }
 
     const store = new CogsOverridesStore({ shop, dataDir: app.config.DATA_DIR });
     await store.ensureLoaded();
@@ -122,7 +147,11 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     }
 
     const hit = cogsServiceByShop.get(shop);
-    if (hit) return hit;
+    if (hit) {
+      const overrides = await getCogsOverridesStoreForShop(shop);
+      await (overrides as any).ensureFresh?.();
+      return hit;
+    }
 
     const overrides = await getCogsOverridesStoreForShop(shop);
     const service = new CogsService(overrides);
@@ -137,7 +166,10 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     }
 
     const hit = costModelOverridesByShop.get(shop);
-    if (hit) return hit;
+    if (hit) {
+      await (hit as any).ensureFresh?.();
+      return hit;
+    }
 
     const store = new CostModelOverridesStore({ shop, dataDir: app.config.DATA_DIR });
     await store.ensureLoaded();
@@ -152,7 +184,10 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     }
 
     const hit = actionPlanStateByShop.get(shop);
-    if (hit) return hit;
+    if (hit) {
+      await (hit as any).ensureFresh?.();
+      return hit;
+    }
 
     const store = new ActionPlanStateStore({ shop, dataDir: app.config.DATA_DIR });
     await store.ensureLoaded();
@@ -212,7 +247,6 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
     return redactOrderPII(order);
   }
 
-  // Legacy single-shop client
   const shopify =
     legacyShop && legacyToken
       ? createShopifyClient({ shopDomain: legacyShop, accessToken: legacyToken })
@@ -226,28 +260,37 @@ export async function createShopifyCtx(app: FastifyInstance): Promise<ShopifyCtx
             accessToken: "missing_token",
           });
 
-  const legacyShopKey = legacyShop || "unknown.myshopify.com";
-
-  const cogsOverridesStore = new CogsOverridesStore({
-    shop: legacyShopKey,
-    dataDir: app.config.DATA_DIR,
-  });
-  await cogsOverridesStore.ensureLoaded();
-
-  const cogsService = new CogsService(cogsOverridesStore);
-
   const costProfile = resolveCostProfileFromConfig(app.config);
 
-  const costModelOverridesStore = new CostModelOverridesStore({
-    shop: legacyShopKey,
-    dataDir: app.config.DATA_DIR,
-  });
+  const cogsOverridesStore = legacyShop
+    ? new CogsOverridesStore({
+        shop: legacyShop,
+        dataDir: app.config.DATA_DIR,
+      })
+    : makeDisabledCogsOverridesStore();
+
+  await cogsOverridesStore.ensureLoaded();
+
+  const cogsService = legacyShop
+    ? new CogsService(cogsOverridesStore)
+    : (new CogsService(cogsOverridesStore as any) as CogsService);
+
+  const costModelOverridesStore = legacyShop
+    ? new CostModelOverridesStore({
+        shop: legacyShop,
+        dataDir: app.config.DATA_DIR,
+      })
+    : makeDisabledCostModelOverridesStore();
+
   await costModelOverridesStore.ensureLoaded();
 
-  const actionPlanStateStore = new ActionPlanStateStore({
-    shop: legacyShopKey,
-    dataDir: app.config.DATA_DIR,
-  });
+  const actionPlanStateStore = legacyShop
+    ? new ActionPlanStateStore({
+        shop: legacyShop,
+        dataDir: app.config.DATA_DIR,
+      })
+    : makeDisabledActionPlanStateStore();
+
   await actionPlanStateStore.ensureLoaded();
 
   async function fetchOrders(days: number) {

@@ -1,3 +1,4 @@
+// src/routes/shopify/dailyProfit.route.ts
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { round2 } from "../../utils/money.js";
@@ -15,9 +16,6 @@ import {
 
 // ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
-
-// ✅ SSOT variant qty extraction
-import { extractVariantQtyFromOrder } from "../../domain/profit/variants.js";
 
 export function registerDailyProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/orders/daily-profit", async (req, reply) => {
@@ -46,8 +44,7 @@ export function registerDailyProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         ? ctx.costModelOverridesStore
         : await ctx.getCostModelOverridesStoreForShop(shop);
 
-      // ✅ persisted overrides + request overrides (request wins)
-      await costModelOverridesStore.ensureLoaded();
+      await (costModelOverridesStore as any).ensureFresh?.();
       const persisted = costModelOverridesStore.getOverridesSync();
       const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
 
@@ -63,17 +60,6 @@ export function registerDailyProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) 
       });
 
       const orderProfits: any[] = [];
-
-      function computeHasMissingCogs(order: any): boolean {
-        const vqs = extractVariantQtyFromOrder(order);
-        for (const li of vqs) {
-          const unitCost = unitCostByVariant.get(li.variantId) ?? 0;
-          const isIgnored = cogsOverridesStore.isIgnoredSync(li.variantId);
-          if (!isIgnored && (!Number.isFinite(unitCost) || unitCost <= 0)) return true;
-        }
-        return false;
-      }
-
       let missingCogsCount = 0;
 
       for (const o of orders) {
@@ -86,7 +72,7 @@ export function registerDailyProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) 
           isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
         });
 
-        const hasMissingCogs = computeHasMissingCogs(o);
+        const hasMissingCogs = Boolean((p as any).hasMissingCogs);
         if (hasMissingCogs) missingCogsCount += 1;
 
         orderProfits.push({
@@ -107,6 +93,9 @@ export function registerDailyProfitRoute(app: FastifyInstance, ctx: ShopifyCtx) 
           profitAfterShipping: p.profitAfterShipping,
 
           hasMissingCogs,
+          missingCogsVariantIds: Array.isArray((p as any).missingCogsVariantIds)
+            ? (p as any).missingCogsVariantIds
+            : [],
         });
       }
 

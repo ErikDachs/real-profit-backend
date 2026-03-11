@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-03-04T08:51:37.559Z",
+  "updatedAt": "2026-03-11T17:08:06.805Z",
   "shops": {
     "test-shop.myshopify.com": {
       "accessToken": null,
@@ -31,6 +31,17 @@
       "updatedAt": "2026-03-04T08:51:37.558Z",
       "uninstalledAt": "2026-03-04T08:51:37.558Z",
       "pendingOAuth": null
+    },
+    "dein-shop.myshopify.com": {
+      "accessToken": null,
+      "scope": null,
+      "installedAt": null,
+      "updatedAt": "2026-03-11T17:08:06.805Z",
+      "uninstalledAt": null,
+      "pendingOAuth": {
+        "state": "b22c42f28fb32c3894a76a9438f7796d8f91156d1aaf95e3",
+        "expiresAt": "2026-03-11T17:18:06.804Z"
+      }
     }
   }
 }

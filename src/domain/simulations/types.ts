@@ -15,6 +15,10 @@ export type OpportunitySimulation = {
   currency: string;
   days: number;
 
+  // legacy/top-level convenience fields used by current simulation output
+  estimatedMonthlyLoss: number;
+  estimatedAnnualLoss: number;
+
   baseline: {
     estimatedMonthlyLoss: number;
     estimatedAnnualLoss: number;
