@@ -1,17 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { normalizeShopDomain, isValidShopDomain } from "../storage/shopsStore.js";
 
-function publicFilePath(filename: string) {
-  return path.join(process.cwd(), "public", filename);
-}
-
-async function sendPublicFile(reply: any, filename: string, contentType: string) {
-  const file = await readFile(publicFilePath(filename), "utf8");
-  reply.header("Content-Type", contentType);
-  reply.header("Cache-Control", "no-store");
-  return reply.send(file);
+function publicFilePath(...parts: string[]) {
+  return path.join(process.cwd(), "public", ...parts);
 }
 
 type AppQuery = {
@@ -47,13 +41,13 @@ function sendOpenFromShopifyPage(reply: any) {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>ProfitLens Analytics</title>
+        <title>Real Profit</title>
         <style>
           body {
             margin: 0;
             font-family: Inter, Arial, sans-serif;
-            background: #f5f7fb;
-            color: #17212f;
+            background: #0b1020;
+            color: #f5f7fb;
           }
           .wrap {
             max-width: 760px;
@@ -61,11 +55,11 @@ function sendOpenFromShopifyPage(reply: any) {
             padding: 24px;
           }
           .card {
-            background: #fff;
-            border: 1px solid #e5eaf2;
+            background: #12182b;
+            border: 1px solid #26304a;
             border-radius: 18px;
             padding: 24px;
-            box-shadow: 0 12px 32px rgba(19, 33, 68, 0.08);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
           }
           h1 {
             margin: 0 0 12px;
@@ -73,27 +67,47 @@ function sendOpenFromShopifyPage(reply: any) {
           }
           p {
             margin: 0 0 12px;
-            color: #5f6c7b;
+            color: #8e9ab2;
             line-height: 1.6;
           }
           .hint {
             margin-top: 16px;
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            color: #0f766e;
+            color: #3dd9c5;
           }
         </style>
       </head>
       <body>
         <div class="wrap">
           <div class="card">
-            <h1>ProfitLens Analytics</h1>
+            <h1>Real Profit</h1>
             <p>Please open this app from Shopify Admin.</p>
-            <p class="hint">This page no longer serves merchant data without an authenticated embedded app session.</p>
+            <p class="hint">This app requires an authenticated embedded Shopify session.</p>
           </div>
         </div>
       </body>
     </html>
   `);
+}
+
+function injectRuntimeParams(html: string, query: AppQuery) {
+  const shop = normalizeShopDomain(String(query.shop || "").trim());
+  const host = String(query.host || "").trim();
+  const embedded = String(query.embedded || "").trim();
+  const apiKey = process.env.SHOPIFY_API_KEY || "";
+
+  const runtimeScript = `
+    <script>
+      window.__REAL_PROFIT_RUNTIME__ = {
+        shop: ${JSON.stringify(shop || "")},
+        host: ${JSON.stringify(host || "")},
+        embedded: ${JSON.stringify(embedded || "")},
+        apiKey: ${JSON.stringify(apiKey)}
+      };
+    </script>
+  `;
+
+  return html.replace("</head>", `${runtimeScript}\n</head>`);
 }
 
 export async function registerAppFrontendRoutes(app: FastifyInstance) {
@@ -115,14 +129,49 @@ export async function registerAppFrontendRoutes(app: FastifyInstance) {
       return sendOpenFromShopifyPage(reply);
     }
 
-    return sendPublicFile(reply, "app.html", "text/html; charset=utf-8");
+    const indexPath = publicFilePath("index.html");
+
+    if (!existsSync(indexPath)) {
+      return reply.status(500).send({
+        error: "Frontend build missing",
+        details: "backend/public/index.html not found. Build the frontend first.",
+      });
+    }
+
+    const html = await readFile(indexPath, "utf8");
+    const injected = injectRuntimeParams(html, req.query);
+
+    reply.header("Content-Type", "text/html; charset=utf-8");
+    reply.header("Cache-Control", "no-store");
+    return reply.send(injected);
   });
 
-  app.get("/app.css", async (_req, reply) => {
-    return sendPublicFile(reply, "app.css", "text/css; charset=utf-8");
-  });
+  app.get("/assets/*", async (req, reply) => {
+    const wildcard = (req.params as any)["*"];
+    const filePath = publicFilePath("assets", wildcard);
 
-  app.get("/app.js", async (_req, reply) => {
-    return sendPublicFile(reply, "app.js", "application/javascript; charset=utf-8");
+    if (!existsSync(filePath)) {
+      return reply.status(404).send({ error: "Asset not found" });
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+
+    const contentType =
+      ext === ".js"
+        ? "application/javascript; charset=utf-8"
+        : ext === ".css"
+          ? "text/css; charset=utf-8"
+          : ext === ".svg"
+            ? "image/svg+xml"
+            : ext === ".png"
+              ? "image/png"
+              : ext === ".jpg" || ext === ".jpeg"
+                ? "image/jpeg"
+                : "application/octet-stream";
+
+    const file = await readFile(filePath);
+    reply.header("Content-Type", contentType);
+    reply.header("Cache-Control", "public, max-age=31536000, immutable");
+    return reply.send(file);
   });
 }
