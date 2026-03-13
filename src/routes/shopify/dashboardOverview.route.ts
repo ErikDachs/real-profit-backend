@@ -4,26 +4,22 @@ import type { ShopifyCtx } from "./ctx.js";
 import { round2 } from "../../utils/money.js";
 import {
   parseDays,
-  parseShop,
   precomputeUnitCostsForOrders,
   effectiveCostOverrides,
 } from "./helpers.js";
 
-// ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 import type { CostProfileOverrides } from "../../domain/costModel/types.js";
 
-// Aggregation + Health
 import { buildOrdersSummary } from "../../domain/profit/ordersSummary.js";
 import { computeProfitHealthFromSummary } from "../../domain/health/profitHealth.js";
 
-// ✅ Order profit engine (same as /api/orders/profit)
 import { calculateOrderProfit, allocateFixedCostsForOrders } from "../../domain/profit.js";
 import { allocateAdSpendForOrders, computeProfitAfterAds } from "../../domain/profit/ads.js";
 
-// Insights / Opportunities / Actions
 import { buildProfitKillersInsights } from "../../domain/insights/profitKillers.js";
 import { buildActionPlan } from "../../domain/actions/buildActionPlan.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 async function readPersistedOverrides(
   store: any
@@ -79,32 +75,40 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
       const adSpend = round2(Number(q?.adSpend ?? 0) || 0);
       const currentRoas = Number(q?.currentRoas ?? 0) || 0;
 
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const shop = auth.shop;
 
-      const raw = shop === ctx.shop
-        ? await ctx.fetchOrders(days)
-        : await ctx.fetchOrdersForShop(shop, days);
+      const shopifyClient =
+        shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
 
-      const ordersRaw: any[] = Array.isArray(raw) ? raw : Array.isArray((raw as any)?.orders) ? (raw as any).orders : [];
+      const raw =
+        shop === ctx.shop
+          ? await ctx.fetchOrders(days)
+          : await ctx.fetchOrdersForShop(shop, days);
 
-      const cogsOverridesStore = shop === ctx.shop
-        ? ctx.cogsOverridesStore
-        : await ctx.getCogsOverridesStoreForShop(shop);
+      const ordersRaw: any[] = Array.isArray(raw)
+        ? raw
+        : Array.isArray((raw as any)?.orders)
+          ? (raw as any).orders
+          : [];
 
-      const cogsService = shop === ctx.shop
-        ? ctx.cogsService
-        : await ctx.getCogsServiceForShop(shop);
+      const cogsOverridesStore =
+        shop === ctx.shop
+          ? ctx.cogsOverridesStore
+          : await ctx.getCogsOverridesStoreForShop(shop);
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const cogsService =
+        shop === ctx.shop
+          ? ctx.cogsService
+          : await ctx.getCogsServiceForShop(shop);
 
-      // ---- Cost Profile (SSOT)
+      const costModelOverridesStore =
+        shop === ctx.shop
+          ? ctx.costModelOverridesStore
+          : await ctx.getCostModelOverridesStoreForShop(shop);
+
       const persisted = await readPersistedOverrides(costModelOverridesStore as any);
       const persistedOverrides = (persisted as any)?.overrides as CostProfileOverrides | undefined;
       const overrides = effectiveCostOverrides({ persisted: persistedOverrides, input: q });
@@ -114,14 +118,12 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         overrides,
       });
 
-      // ---- Unit costs
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders: ordersRaw,
         cogsService,
         shopifyGET: shopifyClient.get,
       });
 
-      // ---- SSOT summary (store-level)
       const summary = await buildOrdersSummary({
         shop,
         days,
@@ -134,10 +136,8 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
       });
 
-      // ---- Health
       const health = computeProfitHealthFromSummary(summary as any);
 
-      // ---- Build order profit rows (same logic as /api/orders/profit)
       const orderProfitsBase: any[] = [];
       for (const o of ordersRaw) {
         const p = await calculateOrderProfit({
@@ -158,7 +158,6 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         });
       }
 
-      // Ads allocation (optional)
       let enriched = orderProfitsBase;
 
       if (adSpend > 0) {
@@ -195,10 +194,11 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         }));
       }
 
-      // Fixed costs allocation (SSOT)
       const daysInMonth = Math.max(1, Number(costProfile.fixedCosts?.daysInMonth ?? 30));
       const monthlyTotal = round2(Number(costProfile.derived?.fixedCostsMonthlyTotal ?? 0));
-      const fixedCostsAllocatedInPeriod = round2(monthlyTotal * (Math.max(1, Number(days || 0)) / daysInMonth));
+      const fixedCostsAllocatedInPeriod = round2(
+        monthlyTotal * (Math.max(1, Number(days || 0)) / daysInMonth)
+      );
 
       const fixedAllocMode = (costProfile.fixedCosts?.allocationMode ?? "PER_ORDER") as "PER_ORDER" | "BY_NET_SALES";
 
@@ -207,7 +207,9 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         fixedCostsTotal: fixedCostsAllocatedInPeriod,
         mode: fixedAllocMode === "BY_NET_SALES" ? "BY_NET_SALES" : "PER_ORDER",
       }).map((o: any) => {
-        const profitAfterFixedCosts = round2(Number(o.profitAfterAdsAndShipping ?? 0) - Number(o.fixedCostAllocated ?? 0));
+        const profitAfterFixedCosts = round2(
+          Number(o.profitAfterAdsAndShipping ?? 0) - Number(o.fixedCostAllocated ?? 0)
+        );
         return {
           ...o,
           fixedCostAllocated: round2(Number(o.fixedCostAllocated ?? 0)),
@@ -215,7 +217,6 @@ export function registerDashboardOverviewRoute(app: FastifyInstance, ctx: Shopif
         };
       });
 
-      // ---- Insights (ProfitKillers produces SSOT unified opportunities internally)
       const debug: any = { insightErrors: [] as string[] };
 
       let profitKillers: any = null;

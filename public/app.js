@@ -289,11 +289,37 @@
       .join("");
   }
 
+  function initEmbeddedContext() {
+    const shop = getQueryParam("shop");
+    const host = getQueryParam("host");
+
+    if (!shop || !host) {
+      throw new Error("Missing embedded app context (shop/host)");
+    }
+
+    if (!window.shopify || typeof window.shopify.idToken !== "function") {
+      throw new Error("Shopify embedded app runtime not available");
+    }
+
+    currentShop = shop;
+  }
+
+  async function getSessionToken() {
+    if (!window.shopify || typeof window.shopify.idToken !== "function") {
+      throw new Error("Could not get session token");
+    }
+
+    return window.shopify.idToken();
+  }
+
   async function fetchJson(url) {
+    const token = await getSessionToken();
+
     const res = await fetch(url, {
       method: "GET",
       headers: {
         Accept: "application/json",
+        Authorization: "Bearer " + token,
       },
     });
 
@@ -317,7 +343,7 @@
     const shop = getQueryParam("shop");
 
     if (!shop) {
-      showError("Missing shop query parameter. Expected /app?shop=your-store.myshopify.com");
+      showError("Missing shop query parameter.");
       return;
     }
 
@@ -369,5 +395,11 @@
   refreshBtn.addEventListener("click", loadApp);
 
   setActiveTab("overview");
-  loadApp();
+
+  try {
+    initEmbeddedContext();
+    loadApp();
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
 })();

@@ -5,13 +5,11 @@ import { calculateOrderProfit, allocateFixedCostsForOrders } from "../../domain/
 import { allocateAdSpendForOrders, computeProfitAfterAds } from "../../domain/profit/ads.js";
 import {
   parseDays,
-  parseShop,
   precomputeUnitCostsForOrders,
   effectiveCostOverrides,
 } from "./helpers.js";
-
-// ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 type OrderProfitRow = {
   id: number | string;
@@ -68,25 +66,33 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
       const daysNum = parseDays(q, 30);
       const adSpendNum = round2(Number(q?.adSpend ?? 0) || 0);
 
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
-      const orders = shop === ctx.shop ? await ctx.fetchOrders(daysNum) : await ctx.fetchOrdersForShop(shop, daysNum);
+      const shop = auth.shop;
 
-      const cogsOverridesStore = shop === ctx.shop
-        ? ctx.cogsOverridesStore
-        : await ctx.getCogsOverridesStoreForShop(shop);
+      const shopifyClient =
+        shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
 
-      const cogsService = shop === ctx.shop
-        ? ctx.cogsService
-        : await ctx.getCogsServiceForShop(shop);
+      const orders =
+        shop === ctx.shop
+          ? await ctx.fetchOrders(daysNum)
+          : await ctx.fetchOrdersForShop(shop, daysNum);
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const cogsOverridesStore =
+        shop === ctx.shop
+          ? ctx.cogsOverridesStore
+          : await ctx.getCogsOverridesStoreForShop(shop);
+
+      const cogsService =
+        shop === ctx.shop
+          ? ctx.cogsService
+          : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore =
+        shop === ctx.shop
+          ? ctx.costModelOverridesStore
+          : await ctx.getCostModelOverridesStoreForShop(shop);
 
       await costModelOverridesStore.ensureLoaded();
       const persisted = costModelOverridesStore.getOverridesSync();
@@ -213,7 +219,9 @@ export function registerOrdersProfitRoute(app: FastifyInstance, ctx: ShopifyCtx)
           mode: fixedAllocMode === "BY_NET_SALES" ? "BY_NET_SALES" : "PER_ORDER",
         }).map((o) => {
           const fixedCostAllocated = round2(Number((o as any).fixedCostAllocated ?? 0));
-          const profitAfterFixedCosts = round2(Number((o as any).profitAfterAdsAndShipping ?? 0) - fixedCostAllocated);
+          const profitAfterFixedCosts = round2(
+            Number((o as any).profitAfterAdsAndShipping ?? 0) - fixedCostAllocated
+          );
 
           return {
             ...(o as any),
