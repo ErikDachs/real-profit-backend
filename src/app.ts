@@ -29,9 +29,13 @@ export async function buildApp() {
         SHOPIFY_API_SECRET: { type: "string", default: "" },
         APP_URL: { type: "string", default: "" },
         SHOPIFY_SCOPES: { type: "string", default: "read_orders,read_products" },
+        SHOPIFY_API_VERSION: { type: "string", default: "2026-01" },
 
         SHOPIFY_STORE_DOMAIN: { type: "string", default: "" },
         SHOPIFY_ADMIN_TOKEN: { type: "string", default: "" },
+
+        BILLING_TEST_MODE: { type: "boolean", default: true },
+        BILLING_TRIAL_DAYS: { type: "number", default: 7 },
 
         PAYMENT_FEE_PERCENT: { type: "number", default: 0.029 },
         PAYMENT_FEE_FIXED: { type: "number", default: 0.3 },
@@ -41,19 +45,16 @@ export async function buildApp() {
   });
 
   await app.register(cors, { origin: true, credentials: true });
-await app.register(helmet, {
-  contentSecurityPolicy: false,
-  frameguard: false,
-});
+  await app.register(helmet, {
+    contentSecurityPolicy: false,
+    frameguard: false,
+  });
 
   app.get("/health", async () => {
     return { ok: true, service: "backend", ts: new Date().toISOString() };
   });
 
-  // Minimal merchant-facing frontend
   await registerAppFrontendRoutes(app);
-
-  // Shopify OAuth / webhooks / API
   await registerShopifyRoutes(app);
 
   app.get("/__debug/routes", async () => {

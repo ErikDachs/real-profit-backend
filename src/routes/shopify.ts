@@ -1,4 +1,3 @@
-// src/routes/shopify.ts
 import { FastifyInstance } from "fastify";
 import { createShopifyCtx } from "./shopify/ctx.js";
 
@@ -19,17 +18,17 @@ import { registerActionsStateRoutes } from "./shopify/actionsState.route.js";
 import { registerCostModelRoutes } from "./shopify/costModel.route.js";
 import { registerDashboardOverviewRoute } from "./shopify/dashboardOverview.route.js";
 
-// ✅ NEW
 import { registerShopifyOAuthRoutes } from "./shopify/oauth.route.js";
 import { registerShopifyWebhooksRoutes } from "./shopify/webhooks.route.js";
+import { registerBillingRoutes } from "./shopify/billing.route.js";
 
 export async function registerShopifyRoutes(app: FastifyInstance) {
-  // ✅ OAuth + Webhooks first (no domain impact)
   await registerShopifyOAuthRoutes(app);
   await registerShopifyWebhooksRoutes(app);
 
-  // existing ctx-based routes
   const ctx = await createShopifyCtx(app);
+
+  registerBillingRoutes(app, ctx);
 
   registerCostModelRoutes(app, ctx);
   registerDashboardOverviewRoute(app, ctx);

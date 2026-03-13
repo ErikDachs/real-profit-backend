@@ -1,24 +1,36 @@
-// src/storage/shopsStore.ts
 import fs from "node:fs/promises";
 import path from "node:path";
 
 export type ShopDomain = string;
+export type StoredPlanKey = "starter" | "pro" | "scale";
+
+export type ShopBillingRecord = {
+  plan: StoredPlanKey;
+  subscriptionId: string | null;
+  status: string | null;
+  currentPeriodEnd: string | null;
+  subscriptionName: string | null;
+  test: boolean;
+  trialDays: number;
+  updatedAt: string;
+};
 
 export type ShopTokenRecord = {
   shop: ShopDomain;
 
-  accessToken: string | null; // null if uninstalled/cleared
+  accessToken: string | null;
   scope: string | null;
 
-  installedAt: string | null; // ISO
-  updatedAt: string; // ISO
+  installedAt: string | null;
+  updatedAt: string;
 
-  uninstalledAt: string | null; // ISO
+  uninstalledAt: string | null;
+  billing?: ShopBillingRecord | null;
 };
 
 export type PendingOAuthState = {
   state: string;
-  expiresAt: string; // ISO
+  expiresAt: string;
 };
 
 type FileShapeV1 = {
@@ -33,6 +45,16 @@ type FileShapeV1 = {
       updatedAt: string;
       uninstalledAt: string | null;
       pendingOAuth?: PendingOAuthState | null;
+      billing?: {
+        plan: StoredPlanKey;
+        subscriptionId: string | null;
+        status: string | null;
+        currentPeriodEnd: string | null;
+        subscriptionName: string | null;
+        test: boolean;
+        trialDays: number;
+        updatedAt: string;
+      } | null;
     }
   >;
 };
@@ -54,18 +76,6 @@ export class ShopsStoreError extends Error {
   }
 }
 
-/**
- * ✅ SSOT normalization for shop domains.
- * - lowercases
- * - strips protocol
- * - strips path/query/hash
- * - trims trailing dots/spaces
- *
- * This MUST be used for:
- * - saving shop keys
- * - lookup shop keys
- * - returning canonical shop in responses
- */
 export function normalizeShopDomain(input: any): string {
   const raw = String(input ?? "").trim().toLowerCase();
   if (!raw) return "";
@@ -81,11 +91,11 @@ export function normalizeShopDomain(input: any): string {
 export function isValidShopDomain(shop: any): shop is ShopDomain {
   if (!shop || typeof shop !== "string") return false;
   const s = normalizeShopDomain(shop);
-
-  // Shopify shop domain format: <subdomain>.myshopify.com
-  // keep it strict to avoid SSRF / weird hosts.
-  // Subdomain: letters/numbers/hyphen, must start/end with alnum.
   return /^[a-z0-9][a-z0-9-]*[a-z0-9]\.myshopify\.com$/.test(s) || /^[a-z0-9]\.myshopify\.com$/.test(s);
+}
+
+function isValidPlanKey(value: any): value is StoredPlanKey {
+  return value === "starter" || value === "pro" || value === "scale";
 }
 
 function nowIso() {
@@ -106,11 +116,25 @@ function maskToken(token: string | null): string {
   return `${t.slice(0, 4)}…${t.slice(-4)}`;
 }
 
+function normalizeBilling(input: any): ShopBillingRecord | null {
+  if (!input || typeof input !== "object") return null;
+  if (!isValidPlanKey(input.plan)) return null;
+
+  return {
+    plan: input.plan,
+    subscriptionId: clampStr(input.subscriptionId, 300) ?? null,
+    status: clampStr(input.status, 100) ?? null,
+    currentPeriodEnd: clampStr(input.currentPeriodEnd, 100) ?? null,
+    subscriptionName: clampStr(input.subscriptionName, 200) ?? null,
+    test: Boolean(input.test),
+    trialDays: Number.isFinite(Number(input.trialDays)) ? Math.max(0, Number(input.trialDays)) : 0,
+    updatedAt: clampStr(input.updatedAt, 100) ?? nowIso(),
+  };
+}
+
 export class ShopsStore {
   private loaded = false;
   private file: FileShapeV1 | null = null;
-
-  // ✅ to detect external writes (other ShopsStore instances)
   private lastMtimeMs: number | null = null;
 
   constructor(private params?: { dataDir?: string; filePath?: string }) {}
@@ -159,6 +183,7 @@ export class ShopsStore {
                 expiresAt: String(r.pendingOAuth?.expiresAt ?? ""),
               }
             : null,
+          billing: normalizeBilling(r.billing),
         };
       }
 
@@ -168,33 +193,24 @@ export class ShopsStore {
         shops,
       };
 
-      // remember mtime
       try {
         const st = await fs.stat(fp);
         this.lastMtimeMs = st.mtimeMs;
       } catch {
-        // ignore
+        //
       }
     } catch {
-      // if file doesn't exist or invalid -> init empty
       this.file = { version: 1, updatedAt: nowIso(), shops: {} };
       this.lastMtimeMs = null;
     }
   }
 
-  /**
-   * ✅ Loads once on first use.
-   */
   async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
     this.loaded = true;
     await this.loadFromDisk();
   }
 
-  /**
-   * ✅ Refresh if shops.json changed on disk (e.g. written by another ShopsStore instance).
-   * This solves your current bug: OAuth route writes token, ctx route reads stale memory.
-   */
   private async refreshIfChanged(): Promise<void> {
     await this.ensureLoaded();
     const fp = this.filePath();
@@ -210,7 +226,7 @@ export class ShopsStore {
         await this.loadFromDisk();
       }
     } catch {
-      // ignore (file may not exist yet)
+      //
     }
   }
 
@@ -229,7 +245,7 @@ export class ShopsStore {
       const st = await fs.stat(fp);
       this.lastMtimeMs = st.mtimeMs;
     } catch {
-      // ignore
+      //
     }
   }
 
@@ -251,6 +267,7 @@ export class ShopsStore {
       installedAt: r.installedAt ?? null,
       updatedAt: r.updatedAt ?? nowIso(),
       uninstalledAt: r.uninstalledAt ?? null,
+      billing: normalizeBilling(r.billing),
     };
   }
 
@@ -280,6 +297,7 @@ export class ShopsStore {
       updatedAt: nowIso(),
       uninstalledAt: null,
       pendingOAuth: null,
+      billing: normalizeBilling(prev?.billing),
     };
 
     file.shops[shop] = rec;
@@ -292,7 +310,77 @@ export class ShopsStore {
       installedAt: rec.installedAt,
       updatedAt: rec.updatedAt,
       uninstalledAt: rec.uninstalledAt,
+      billing: normalizeBilling(rec.billing),
     };
+  }
+
+  async upsertBilling(params: {
+    shop: ShopDomain;
+    plan: StoredPlanKey;
+    subscriptionId?: string | null;
+    status?: string | null;
+    currentPeriodEnd?: string | null;
+    subscriptionName?: string | null;
+    test?: boolean;
+    trialDays?: number;
+  }): Promise<ShopBillingRecord> {
+    await this.refreshIfChanged();
+
+    const shop = normalizeShopDomain(params.shop);
+    if (!isValidShopDomain(shop)) {
+      throw new ShopsStoreError("Invalid shop domain", "INVALID_SHOP_DOMAIN", 400);
+    }
+    if (!isValidPlanKey(params.plan)) {
+      throw new ShopsStoreError("Invalid billing plan", "IO_ERROR", 400);
+    }
+
+    const file = this.getFileOrInit();
+    const prev = file.shops[shop];
+
+    const billing: ShopBillingRecord = {
+      plan: params.plan,
+      subscriptionId: clampStr(params.subscriptionId, 300) ?? null,
+      status: clampStr(params.status, 100) ?? null,
+      currentPeriodEnd: clampStr(params.currentPeriodEnd, 100) ?? null,
+      subscriptionName: clampStr(params.subscriptionName, 200) ?? null,
+      test: Boolean(params.test),
+      trialDays: Number.isFinite(Number(params.trialDays)) ? Math.max(0, Number(params.trialDays)) : 0,
+      updatedAt: nowIso(),
+    };
+
+    file.shops[shop] = {
+      accessToken: prev?.accessToken ?? null,
+      scope: prev?.scope ?? null,
+      installedAt: prev?.installedAt ?? null,
+      updatedAt: nowIso(),
+      uninstalledAt: prev?.uninstalledAt ?? null,
+      pendingOAuth: prev?.pendingOAuth ?? null,
+      billing,
+    };
+
+    await this.persist();
+    return billing;
+  }
+
+  async clearBilling(shopInput: ShopDomain): Promise<void> {
+    await this.refreshIfChanged();
+
+    const shop = normalizeShopDomain(shopInput);
+    if (!isValidShopDomain(shop)) {
+      throw new ShopsStoreError("Invalid shop domain", "INVALID_SHOP_DOMAIN", 400);
+    }
+
+    const file = this.getFileOrInit();
+    const prev = file.shops[shop];
+    if (!prev) return;
+
+    file.shops[shop] = {
+      ...prev,
+      billing: null,
+      updatedAt: nowIso(),
+    };
+
+    await this.persist();
   }
 
   async clearToken(params: { shop: ShopDomain; reason?: "UNINSTALLED" | "MANUAL" }): Promise<void> {
@@ -306,7 +394,6 @@ export class ShopsStore {
     const file = this.getFileOrInit();
     const prev = file.shops[shop];
 
-    // if record doesn't exist, still create a tombstone (helps idempotency on uninstall)
     file.shops[shop] = {
       accessToken: null,
       scope: prev?.scope ?? null,
@@ -314,6 +401,7 @@ export class ShopsStore {
       updatedAt: nowIso(),
       uninstalledAt: params.reason === "UNINSTALLED" ? nowIso() : prev?.uninstalledAt ?? null,
       pendingOAuth: null,
+      billing: normalizeBilling(prev?.billing),
     };
 
     await this.persist();
@@ -340,6 +428,7 @@ export class ShopsStore {
       updatedAt: nowIso(),
       uninstalledAt: prev?.uninstalledAt ?? null,
       pendingOAuth: { state, expiresAt },
+      billing: normalizeBilling(prev?.billing),
     };
 
     await this.persist();
@@ -371,7 +460,6 @@ export class ShopsStore {
       throw new ShopsStoreError("OAuth state expired", "STATE_EXPIRED", 400);
     }
 
-    // consume
     file.shops[shop] = {
       ...(rec ?? {
         accessToken: null,
@@ -380,6 +468,7 @@ export class ShopsStore {
         updatedAt: nowIso(),
         uninstalledAt: null,
         pendingOAuth: null,
+        billing: null,
       }),
       pendingOAuth: null,
       updatedAt: nowIso(),
@@ -412,6 +501,7 @@ export class ShopsStore {
       installedAt: file.shops[shop]?.installedAt ?? null,
       updatedAt: file.shops[shop]?.updatedAt ?? nowIso(),
       uninstalledAt: file.shops[shop]?.uninstalledAt ?? null,
+      billing: normalizeBilling(file.shops[shop]?.billing),
     }));
   }
 
@@ -425,6 +515,7 @@ export class ShopsStore {
       installedAt: r.installedAt,
       updatedAt: r.updatedAt,
       uninstalledAt: r.uninstalledAt,
+      billing: r.billing ?? null,
       accessTokenMasked: maskToken(r.accessToken),
     }));
   }
