@@ -41,9 +41,10 @@ export async function buildApp() {
   });
 
   await app.register(cors, { origin: true, credentials: true });
-  await app.register(helmet, {
-    contentSecurityPolicy: false,
-  });
+await app.register(helmet, {
+  contentSecurityPolicy: false,
+  frameguard: false,
+});
 
   app.get("/health", async () => {
     return { ok: true, service: "backend", ts: new Date().toISOString() };
