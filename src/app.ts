@@ -37,6 +37,9 @@ export async function buildApp() {
         BILLING_TEST_MODE: { type: "boolean", default: true },
         BILLING_TRIAL_DAYS: { type: "number", default: 7 },
 
+        BILLING_BYPASS: { type: "boolean", default: false },
+        BILLING_BYPASS_PLAN: { type: "string", default: "pro" },
+
         PAYMENT_FEE_PERCENT: { type: "number", default: 0.029 },
         PAYMENT_FEE_FIXED: { type: "number", default: 0.3 },
         DEFAULT_SHIPPING_COST: { type: "number", default: 5 },
