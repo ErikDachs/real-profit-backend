@@ -8,17 +8,13 @@ import {
   parseDays,
   parseLimit,
   parseAdInputs,
-  parseShop,
   precomputeUnitCostsForOrders,
   effectiveCostOverrides,
 } from "./helpers.js";
 import { enrichOrdersWithAds, enrichProductsWithAds } from "../../domain/insights/adsAllocation.js";
-
-// ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
-
-// ✅ Opportunity -> Scenario simulations (true re-run via SSOT engine)
 import { runOpportunityScenarioSimulations } from "../../domain/simulations/runScenarioPresets.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/insights/profit-killers", async (req, reply) => {
@@ -29,48 +25,49 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
       const limitNum = parseLimit(q, 10);
       const { adSpend, currentRoas } = parseAdInputs(q);
 
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const shop = auth.shop;
 
-      const orders = shop === ctx.shop
-        ? await ctx.fetchOrders(daysNum)
-        : await ctx.fetchOrdersForShop(shop, daysNum);
+      const shopifyClient =
+        shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
 
-      const cogsOverridesStore = shop === ctx.shop
-        ? ctx.cogsOverridesStore
-        : await ctx.getCogsOverridesStoreForShop(shop);
+      const orders =
+        shop === ctx.shop
+          ? await ctx.fetchOrders(daysNum)
+          : await ctx.fetchOrdersForShop(shop, daysNum);
 
-      const cogsService = shop === ctx.shop
-        ? ctx.cogsService
-        : await ctx.getCogsServiceForShop(shop);
+      const cogsOverridesStore =
+        shop === ctx.shop
+          ? ctx.cogsOverridesStore
+          : await ctx.getCogsOverridesStoreForShop(shop);
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const cogsService =
+        shop === ctx.shop
+          ? ctx.cogsService
+          : await ctx.getCogsServiceForShop(shop);
 
-      // ✅ Persisted overrides + request overrides (request wins)
+      const costModelOverridesStore =
+        shop === ctx.shop
+          ? ctx.costModelOverridesStore
+          : await ctx.getCostModelOverridesStoreForShop(shop);
+
       await costModelOverridesStore.ensureLoaded();
       const persisted = costModelOverridesStore.getOverridesSync();
       const mergedOverrides = effectiveCostOverrides({ persisted, input: q });
 
-      // ✅ Resolve cost profile per request (config + merged overrides)
       const costProfile = resolveCostProfile({
         config: (app as any).config ?? {},
         overrides: mergedOverrides,
       });
 
-      // Precompute unit costs (shared across all order profits + scenario simulations)
       const unitCostByVariant = await precomputeUnitCostsForOrders({
         orders,
         cogsService,
         shopifyGET: shopifyClient.get,
       });
 
-      // ✅ SSOT summary source for missingCogsCount
       const summary = await buildOrdersSummary({
         shop,
         days: daysNum,
@@ -94,32 +91,32 @@ export function registerProfitKillersRoute(app: FastifyInstance, ctx: ShopifyCtx
           isIgnoredVariant: (variantId: number) => cogsOverridesStore.isIgnoredSync(variantId),
         });
 
-orderProfits.push({
-  id: o.id,
-  name: o.name ?? null,
-  createdAt: o.created_at ?? null,
-  currency: o.currency ?? null,
+        orderProfits.push({
+          id: o.id,
+          name: o.name ?? null,
+          createdAt: o.created_at ?? null,
+          currency: o.currency ?? null,
 
-  grossSales: p.grossSales,
-  refunds: p.refunds,
-  netAfterRefunds: p.netAfterRefunds,
-  cogs: p.cogs,
-  paymentFees: p.paymentFees,
+          grossSales: p.grossSales,
+          refunds: p.refunds,
+          netAfterRefunds: p.netAfterRefunds,
+          cogs: p.cogs,
+          paymentFees: p.paymentFees,
 
-  contributionMargin: p.contributionMargin,
-  contributionMarginPct: p.contributionMarginPct,
+          contributionMargin: p.contributionMargin,
+          contributionMarginPct: p.contributionMarginPct,
 
-  isGiftCardOnlyOrder: p.isGiftCardOnlyOrder,
-  giftCardNetSalesExcluded: p.giftCardNetSalesExcluded,
+          isGiftCardOnlyOrder: p.isGiftCardOnlyOrder,
+          giftCardNetSalesExcluded: p.giftCardNetSalesExcluded,
 
-  shippingRevenue: p.shippingRevenue,
-  shippingCost: p.shippingCost,
-  shippingImpact: p.shippingImpact,
-  profitAfterShipping: p.profitAfterShipping,
+          shippingRevenue: p.shippingRevenue,
+          shippingCost: p.shippingCost,
+          shippingImpact: p.shippingImpact,
+          profitAfterShipping: p.profitAfterShipping,
 
-  adSpendBreakEven: p.adSpendBreakEven,
-  breakEvenRoas: p.breakEvenRoas,
-});
+          adSpendBreakEven: p.adSpendBreakEven,
+          breakEvenRoas: p.breakEvenRoas,
+        });
       }
 
       const daily = buildDailyProfit({
@@ -132,10 +129,8 @@ orderProfits.push({
           netAfterRefunds: x.netAfterRefunds,
           cogs: x.cogs,
           paymentFees: x.paymentFees,
-
           profitAfterFees: x.contributionMargin,
           contributionMargin: x.contributionMargin,
-
           shippingRevenue: x.shippingRevenue,
           shippingCost: x.shippingCost,
           profitAfterShipping: x.profitAfterShipping,
@@ -152,10 +147,7 @@ orderProfits.push({
       });
 
       const productsRaw = (productResult?.products ?? []) as any[];
-
-      // ✅ ONLY from SSOT summary now
       const missingCogsCount = Number(summary?.missingCogsCount ?? 0);
-
       const spend = Number(adSpend ?? 0);
 
       const ordersEnriched = enrichOrdersWithAds({
@@ -190,7 +182,6 @@ orderProfits.push({
         },
       });
 
-      // ✅ Scenario simulations for TOP opportunities (SSOT)
       const topOpps = (insights as any)?.opportunities?.top ?? (insights as any)?.unifiedOpportunitiesTop5 ?? [];
       const adSpendNum = Number.isFinite(spend) ? spend : 0;
 
@@ -216,12 +207,10 @@ orderProfits.push({
 
       return reply.send({
         ...insights,
-
         scenarioSimulations: {
           baselineSummary: scenarioPack.baselineSummary,
           byOpportunity: scenarioPack.simulationsByOpportunity,
         },
-
         costModel: {
           fingerprint: costProfile.meta.fingerprint,
           persistedUpdatedAt: costModelOverridesStore.getUpdatedAtSync() ?? null,

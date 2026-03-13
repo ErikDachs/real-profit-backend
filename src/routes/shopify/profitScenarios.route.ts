@@ -2,10 +2,10 @@ import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
 import { round2 } from "../../utils/money.js";
 import { buildOrdersSummary } from "../../domain/profit.js";
-import { parseDays, parseShop } from "./helpers.js";
-
+import { parseDays } from "./helpers.js";
 import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
 import { buildProfitScenarioResult } from "../../domain/simulations/profitScenarioSimulation.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 function mergeDeepShallow(a: any, b: any) {
   const out = { ...(a ?? {}) };
@@ -35,17 +35,14 @@ function scenarioToOverrides(params: { scenario: string; baseCostProfile: any })
       return { payment: { feePercent: feePercentBase * 0.8, feeFixed: feeFixedBase * 0.8 } };
     case "fees_-30":
       return { payment: { feePercent: feePercentBase * 0.7, feeFixed: feeFixedBase * 0.7 } };
-
     case "ship_-25":
       return { shipping: { costPerOrder: shipCostPerOrderBase * 0.75 } };
     case "ship_-50":
       return { shipping: { costPerOrder: shipCostPerOrderBase * 0.5 } };
     case "ship_-75":
       return { shipping: { costPerOrder: shipCostPerOrderBase * 0.25 } };
-
     case "ship_off":
       return { flags: { includeShippingCost: false } };
-
     default:
       return null;
   }
@@ -68,24 +65,18 @@ export function registerProfitScenariosRoute(app: FastifyInstance, ctx: ShopifyC
         });
       }
 
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
+
+      const shop = auth.shop;
 
       const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const orders =
+        shop === ctx.shop ? await ctx.fetchOrders(daysNum) : await ctx.fetchOrdersForShop(shop, daysNum);
 
-      const orders = shop === ctx.shop
-        ? await ctx.fetchOrders(daysNum)
-        : await ctx.fetchOrdersForShop(shop, daysNum);
-
-      const cogsService = shop === ctx.shop
-        ? ctx.cogsService
-        : await ctx.getCogsServiceForShop(shop);
-
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const cogsService = shop === ctx.shop ? ctx.cogsService : await ctx.getCogsServiceForShop(shop);
+      const costModelOverridesStore =
+        shop === ctx.shop ? ctx.costModelOverridesStore : await ctx.getCostModelOverridesStoreForShop(shop);
 
       const allVariantIds: number[] = [];
       for (const o of orders) {

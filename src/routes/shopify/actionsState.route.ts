@@ -1,8 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
-import { parseShop } from "./helpers.js";
-
 import type { ActionStatus } from "../../storage/actionPlanStateStore.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 function normalizeStatus(x: any): ActionStatus {
   const s = String(x || "").toUpperCase();
@@ -11,18 +10,16 @@ function normalizeStatus(x: any): ActionStatus {
 }
 
 export function registerActionsStateRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
-  // List all persisted states (UI hydration)
   app.get("/api/actions/state", async (req, reply) => {
     try {
       const q = req.query as any;
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const actionPlanStateStore = shop === ctx.shop
-        ? ctx.actionPlanStateStore
-        : await ctx.getActionPlanStateStoreForShop(shop);
+      const shop = auth.shop;
+
+      const actionPlanStateStore =
+        shop === ctx.shop ? ctx.actionPlanStateStore : await ctx.getActionPlanStateStoreForShop(shop);
 
       await actionPlanStateStore.ensureLoaded();
       const items = await actionPlanStateStore.list();
@@ -38,18 +35,16 @@ export function registerActionsStateRoutes(app: FastifyInstance, ctx: ShopifyCtx
     }
   });
 
-  // Upsert status/note/dueDate
   app.patch("/api/actions/state", async (req, reply) => {
     try {
       const q = req.query as any;
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const actionPlanStateStore = shop === ctx.shop
-        ? ctx.actionPlanStateStore
-        : await ctx.getActionPlanStateStoreForShop(shop);
+      const shop = auth.shop;
+
+      const actionPlanStateStore =
+        shop === ctx.shop ? ctx.actionPlanStateStore : await ctx.getActionPlanStateStoreForShop(shop);
 
       const body = (req.body ?? {}) as any;
 

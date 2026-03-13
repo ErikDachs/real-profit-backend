@@ -8,7 +8,6 @@ import {
   parseDays,
   parseLimit,
   parseAdInputs,
-  parseShop,
   precomputeUnitCostsForOrders,
   effectiveCostOverrides,
 } from "./helpers.js";
@@ -20,17 +19,11 @@ import { buildOpportunityDeepDive } from "../../domain/opportunities/deepDive.js
 import type { OpportunityType } from "../../domain/opportunities/types.js";
 
 import { buildActionPlan } from "../../domain/actions.js";
-
-// SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
 import { round2 } from "../../utils/money.js";
-
-// Scenario sims (SSOT re-run)
 import { runOpportunityScenarioSimulations } from "../../domain/simulations/runScenarioPresets.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
-// ---------
-// Deterministic Action ID (SSOT for status mapping)
-// ---------
 function simpleHash(str: string): string {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
@@ -60,28 +53,33 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
       const limitNum = parseLimit(q, 10);
       const { adSpend, currentRoas } = parseAdInputs(q);
 
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const shop = auth.shop;
 
-      const orders = shop === ctx.shop
-        ? await ctx.fetchOrders(daysNum)
-        : await ctx.fetchOrdersForShop(shop, daysNum);
+      const shopifyClient =
+        shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
 
-      const cogsService = shop === ctx.shop
-        ? ctx.cogsService
-        : await ctx.getCogsServiceForShop(shop);
+      const orders =
+        shop === ctx.shop
+          ? await ctx.fetchOrders(daysNum)
+          : await ctx.fetchOrdersForShop(shop, daysNum);
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const cogsService =
+        shop === ctx.shop
+          ? ctx.cogsService
+          : await ctx.getCogsServiceForShop(shop);
 
-      const actionPlanStateStore = shop === ctx.shop
-        ? ctx.actionPlanStateStore
-        : await ctx.getActionPlanStateStoreForShop(shop);
+      const costModelOverridesStore =
+        shop === ctx.shop
+          ? ctx.costModelOverridesStore
+          : await ctx.getCostModelOverridesStoreForShop(shop);
+
+      const actionPlanStateStore =
+        shop === ctx.shop
+          ? ctx.actionPlanStateStore
+          : await ctx.getActionPlanStateStoreForShop(shop);
 
       await costModelOverridesStore.ensureLoaded();
       const persisted = costModelOverridesStore.getOverridesSync();
@@ -98,7 +96,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         shopifyGET: shopifyClient.get,
       });
 
-      // 1) Build per-order profits (SSOT)
       const orderProfits: any[] = [];
       for (const o of orders) {
         const p = await calculateOrderProfit({
@@ -134,7 +131,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         });
       }
 
-      // 2) Daily totals (for shipping totals etc.)
       const dailyBase = buildDailyProfit({
         shop,
         days: daysNum,
@@ -155,7 +151,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         })),
       });
 
-      // 3) Products (SSOT)
       const productResult = await buildProductsProfit({
         shop,
         days: daysNum,
@@ -168,7 +163,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
       const productsRaw = (productResult?.products ?? []) as any[];
       const missingCogsCount = Number(productResult?.highlights?.missingCogsCount ?? 0);
 
-      // 4) Ads allocation (deterministic)
       const spend = Number(adSpend ?? 0);
 
       const ordersEnrichedAds = enrichOrdersWithAds({
@@ -186,10 +180,11 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         baseProfit: (p) => Number((p as any).profitAfterFees ?? 0),
       });
 
-      // 4.5) Fixed Costs allocation (SSOT)
       const daysInMonth = Math.max(1, Number(costProfile.fixedCosts?.daysInMonth ?? 30));
       const monthlyTotal = round2(Number(costProfile.derived?.fixedCostsMonthlyTotal ?? 0));
-      const fixedCostsAllocatedInPeriod = round2(monthlyTotal * (Math.max(1, Number(daysNum || 0)) / daysInMonth));
+      const fixedCostsAllocatedInPeriod = round2(
+        monthlyTotal * (Math.max(1, Number(daysNum || 0)) / daysInMonth)
+      );
 
       const fixedAllocMode = (costProfile.fixedCosts?.allocationMode ?? "PER_ORDER") as "PER_ORDER" | "BY_NET_SALES";
 
@@ -209,7 +204,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         };
       });
 
-      // 5) Profit killers engine
       const insights = buildProfitKillersInsights({
         shop,
         days: daysNum,
@@ -238,7 +232,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
       const unifiedAll = (insights?.unifiedOpportunitiesAll ?? []) as any[];
       const unifiedTop = (insights?.unifiedOpportunitiesTop5 ?? []) as any[];
 
-      // 6) Scenario sims
       const adSpendNum = Number.isFinite(spend) ? spend : 0;
       const scenarioPack =
         unifiedTop.length > 0
@@ -266,7 +259,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         scenarioByType.set(t, s);
       }
 
-      // 7) Deep dives
       const simulationByType = new Map<OpportunityType, any>();
       for (const [t, s] of scenarioByType.entries()) simulationByType.set(t, s);
 
@@ -281,7 +273,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         limit: Math.min(10, limitNum),
       });
 
-      // 8) Build Action Plan
       const plan = buildActionPlan({
         shop,
         days: daysNum,
@@ -298,7 +289,6 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         limit: limitNum,
       });
 
-      // 9) Merge persisted action states
       await actionPlanStateStore.ensureLoaded();
 
       const actionsWithState = (plan.actions ?? []).map((a: any) => {
@@ -315,7 +305,14 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
         return {
           ...a,
           actionId,
-          state: state ?? { actionId, status: "OPEN", note: null, dueDate: null, dismissedReason: null, updatedAt: null },
+          state: state ?? {
+            actionId,
+            status: "OPEN",
+            note: null,
+            dueDate: null,
+            dismissedReason: null,
+            updatedAt: null,
+          },
         };
       });
 
@@ -338,10 +335,8 @@ export function registerActionsPlanRoute(app: FastifyInstance, ctx: ShopifyCtx) 
             persistedUpdatedAt: actionPlanStateStore.getUpdatedAtSync() ?? null,
           },
         },
-
         opportunities: (insights as any)?.opportunities ?? null,
         insights: (insights as any)?.insights ?? null,
-
         scenarioSimulations: {
           baselineSummary: scenarioPack.baselineSummary,
           byOpportunity: scenarioPack.simulationsByOpportunity,

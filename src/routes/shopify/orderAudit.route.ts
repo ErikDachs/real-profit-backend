@@ -1,12 +1,9 @@
 import { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
-
 import { calculateOrderProfit, extractVariantQtyFromOrder } from "../../domain/profit.js";
 import { round2 } from "../../utils/money.js";
-
-// ✅ SSOT Cost Model Engine
 import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
-import { parseShop } from "./helpers.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 function parseOrderId(raw: any): { ok: true; id: string } | { ok: false; status: number; error: string } {
   const s = String(raw ?? "").trim();
@@ -22,27 +19,21 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
       if (!parsed.ok) return reply.status(parsed.status).send({ error: parsed.error });
 
       const q = req.query as any;
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const shop = auth.shop;
 
       const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const cogsService = shop === ctx.shop ? ctx.cogsService : await ctx.getCogsServiceForShop(shop);
 
-      const cogsService = shop === ctx.shop
-        ? ctx.cogsService
-        : await ctx.getCogsServiceForShop(shop);
-
-      // ✅ Resolve cost profile per request (config + optional overrides)
       const costProfile = resolveCostProfile({
         config: (app as any).config ?? {},
         overrides: costOverridesFromAny(q),
       });
 
-      const order = shop === ctx.shop
-        ? await ctx.fetchOrderById(parsed.id)
-        : await ctx.fetchOrderByIdForShop(shop, parsed.id);
+      const order =
+        shop === ctx.shop ? await ctx.fetchOrderById(parsed.id) : await ctx.fetchOrderByIdForShop(shop, parsed.id);
 
       const variantQty = extractVariantQtyFromOrder(order);
       const variantIds = variantQty.map((x) => x.variantId);
@@ -76,7 +67,6 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
           unitCost: round2(unitCost),
           cogs: round2(cogs),
           missingCogs,
-
           title: meta?.title ?? null,
           sku: meta?.sku ?? null,
           productId: meta?.product_id ?? null,
@@ -123,13 +113,9 @@ export function registerOrderAuditRoute(app: FastifyInstance, ctx: ShopifyCtx) {
         type: "order_audit",
         shop,
         order: orderMeta,
-
         costModel: configInputs,
-
         profit,
-
         lineItems,
-
         checks: {
           missingCogsVariants,
           missingCogsLineItemsCount,

@@ -1,9 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ShopifyCtx } from "./ctx.js";
-import { parseShop } from "./helpers.js";
-
 import { resolveCostProfile, costOverridesFromAny } from "../../domain/costModel/resolve.js";
 import type { CostProfileOverrides } from "../../domain/costModel/types.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 function mergeOverrides(a?: CostProfileOverrides, b?: CostProfileOverrides): CostProfileOverrides | undefined {
   if (!a && !b) return undefined;
@@ -20,11 +19,6 @@ function mergeOverrides(a?: CostProfileOverrides, b?: CostProfileOverrides): Cos
   return out;
 }
 
-/**
- * SECURITY:
- * Never return resolvedFrom/config/env in API responses.
- * Only return resolved values + fingerprint.
- */
 function sanitizeResolvedProfile(resolved: any) {
   return {
     payment: resolved?.payment,
@@ -46,18 +40,16 @@ function sanitizeResolvedProfile(resolved: any) {
 }
 
 export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
-  // GET: show persisted overrides + resolved profile from config+persisted
   app.get("/api/cost-model", async (req, reply) => {
     try {
       const q = req.query as any;
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const shop = auth.shop;
+
+      const costModelOverridesStore =
+        shop === ctx.shop ? ctx.costModelOverridesStore : await ctx.getCostModelOverridesStoreForShop(shop);
 
       await costModelOverridesStore.ensureLoaded();
       const persisted = costModelOverridesStore.getOverridesSync();
@@ -78,18 +70,16 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
     }
   });
 
-  // PUT: replace persisted overrides
   app.put("/api/cost-model", async (req, reply) => {
     try {
       const q = req.query as any;
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const shop = auth.shop;
+
+      const costModelOverridesStore =
+        shop === ctx.shop ? ctx.costModelOverridesStore : await ctx.getCostModelOverridesStoreForShop(shop);
 
       const body: any = (req as any).body ?? {};
       const overrides = costOverridesFromAny(body);
@@ -120,18 +110,16 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
     }
   });
 
-  // PATCH: merge into persisted overrides (partial update)
   app.patch("/api/cost-model", async (req, reply) => {
     try {
       const q = req.query as any;
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const shop = auth.shop;
+
+      const costModelOverridesStore =
+        shop === ctx.shop ? ctx.costModelOverridesStore : await ctx.getCostModelOverridesStoreForShop(shop);
 
       const body: any = (req as any).body ?? {};
       const patch = costOverridesFromAny(body);
@@ -166,18 +154,16 @@ export function registerCostModelRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
     }
   });
 
-  // DELETE: clear persisted overrides
   app.delete("/api/cost-model", async (req, reply) => {
     try {
       const q = req.query as any;
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const shop = auth.shop;
+
+      const costModelOverridesStore =
+        shop === ctx.shop ? ctx.costModelOverridesStore : await ctx.getCostModelOverridesStoreForShop(shop);
 
       await costModelOverridesStore.clear();
 

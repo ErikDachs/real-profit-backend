@@ -5,12 +5,10 @@ import { buildOrdersSummary } from "../../domain/profit.js";
 import { computeProfitHealthFromSummary } from "../../domain/health/profitHealth.js";
 import {
   parseDays,
-  parseShop,
   effectiveCostOverrides,
 } from "./helpers.js";
-
-// ✅ SSOT Cost Model Engine
 import { resolveCostProfile } from "../../domain/costModel/resolve.js";
+import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 
 export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx) {
   app.get("/api/orders/summary", async (req, reply) => {
@@ -19,26 +17,25 @@ export function registerOrdersSummaryRoute(app: FastifyInstance, ctx: ShopifyCtx
       const daysNum = parseDays(q, 30);
       const adSpendNum = round2(Number(q?.adSpend ?? 0) || 0);
 
-      const shop = parseShop(q, ctx.shop);
-      if (!shop) {
-        return reply.status(400).send({ error: "shop is required (valid *.myshopify.com)" });
-      }
+      const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, q?.shop);
+      if (!auth) return;
 
-      const shopifyClient = shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
+      const shop = auth.shop;
 
-      const orders = shop === ctx.shop ? await ctx.fetchOrders(daysNum) : await ctx.fetchOrdersForShop(shop, daysNum);
+      const shopifyClient =
+        shop === ctx.shop ? ctx.shopify : await ctx.createShopifyForShop(shop);
 
-      const cogsOverridesStore = shop === ctx.shop
-        ? ctx.cogsOverridesStore
-        : await ctx.getCogsOverridesStoreForShop(shop);
+      const orders =
+        shop === ctx.shop ? await ctx.fetchOrders(daysNum) : await ctx.fetchOrdersForShop(shop, daysNum);
 
-      const cogsService = shop === ctx.shop
-        ? ctx.cogsService
-        : await ctx.getCogsServiceForShop(shop);
+      const cogsOverridesStore =
+        shop === ctx.shop ? ctx.cogsOverridesStore : await ctx.getCogsOverridesStoreForShop(shop);
 
-      const costModelOverridesStore = shop === ctx.shop
-        ? ctx.costModelOverridesStore
-        : await ctx.getCostModelOverridesStoreForShop(shop);
+      const cogsService =
+        shop === ctx.shop ? ctx.cogsService : await ctx.getCogsServiceForShop(shop);
+
+      const costModelOverridesStore =
+        shop === ctx.shop ? ctx.costModelOverridesStore : await ctx.getCostModelOverridesStoreForShop(shop);
 
       await costModelOverridesStore.ensureLoaded();
       const persisted = costModelOverridesStore.getOverridesSync();
