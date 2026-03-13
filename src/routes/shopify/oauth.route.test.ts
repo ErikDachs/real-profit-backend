@@ -245,20 +245,9 @@ describe("shopify oauth route", () => {
       url: "/api/shopify/oauth/callback?shop=test-shop.myshopify.com&code=abc123&state=state123&hmac=good",
     });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      ok: true,
-      shop: "test-shop.myshopify.com",
-      scope: "read_orders,read_products",
-      webhooks: {
-        ok: true,
-        address: "https://example.com/api/shopify/webhooks",
-        created: ["app/uninstalled"],
-        alreadyPresent: [],
-        skippedComplianceTopics: ["customers/data_request", "customers/redact", "shop/redact"],
-      },
-      next: "/api/orders/profit?shop=test-shop.myshopify.com&days=30",
-    });
+    expect(res.statusCode).toBe(302);
+    expect(typeof res.headers.location).toBe("string");
+    expect(res.headers.location).toContain("test-shop.myshopify.com");
 
     expect(consumePendingOAuthStateMock).toHaveBeenCalledWith({
       shop: "test-shop.myshopify.com",

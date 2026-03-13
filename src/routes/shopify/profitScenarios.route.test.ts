@@ -27,6 +27,7 @@ vi.mock("../../domain/simulations/profitScenarioSimulation.js", () => ({
 }));
 
 import { registerProfitScenariosRoute } from "./profitScenarios.route.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 function makeCtx(overrides?: Partial<any>) {
   const costModelOverridesStore = {
@@ -86,6 +87,8 @@ async function buildApp(ctx: any) {
   const app = Fastify({ logger: false });
   (app as any).config = {
     DATA_DIR: "/tmp/test-data",
+    SHOPIFY_API_KEY: "test_api_key",
+    SHOPIFY_API_SECRET: "test_api_secret",
   };
 
   registerProfitScenariosRoute(app, ctx);
@@ -98,35 +101,34 @@ describe("profitScenarios.route", () => {
 
     costOverridesFromAnyMock.mockReturnValue(undefined);
 
-resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
-  const feePercent = Number(overrides?.payment?.feePercent ?? 0.03);
-  const feeFixed = Number(overrides?.payment?.feeFixed ?? 0.3);
-  const shippingCost = Number(overrides?.shipping?.costPerOrder ?? 8);
-  const shippingOff = overrides?.flags?.includeShippingCost === false;
+    resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
+      const feePercent = Number(overrides?.payment?.feePercent ?? 0.03);
+      const feeFixed = Number(overrides?.payment?.feeFixed ?? 0.3);
+      const shippingOff = overrides?.flags?.includeShippingCost === false;
 
-  if (shippingOff) {
-    return {
-      meta: { fingerprint: "fp_simulated" },
-      payment: { feePercent: 0.03, feeFixed: 0.3 },
-      shipping: { costPerOrder: 0 },
-      flags: { includeShippingCost: false },
-    };
-  }
+      if (shippingOff) {
+        return {
+          meta: { fingerprint: "fp_simulated" },
+          payment: { feePercent: 0.03, feeFixed: 0.3 },
+          shipping: { costPerOrder: 0 },
+          flags: { includeShippingCost: false },
+        };
+      }
 
-  if (feePercent === 0.024 && feeFixed === 0.24) {
-    return {
-      meta: { fingerprint: "fp_simulated" },
-      payment: { feePercent: 0.024, feeFixed: 0.24 },
-      shipping: { costPerOrder: 8 },
-    };
-  }
+      if (feePercent === 0.024 && feeFixed === 0.24) {
+        return {
+          meta: { fingerprint: "fp_simulated" },
+          payment: { feePercent: 0.024, feeFixed: 0.24 },
+          shipping: { costPerOrder: 8 },
+        };
+      }
 
-  return {
-    meta: { fingerprint: "fp_baseline" },
-    payment: { feePercent: 0.03, feeFixed: 0.3 },
-    shipping: { costPerOrder: 8 },
-  };
-});
+      return {
+        meta: { fingerprint: "fp_baseline" },
+        payment: { feePercent: 0.03, feeFixed: 0.3 },
+        shipping: { costPerOrder: 8 },
+      };
+    });
 
     buildOrdersSummaryMock
       .mockResolvedValueOnce({
@@ -168,6 +170,19 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     });
   });
 
+  it("returns 401 without embedded auth token", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/simulations/profit-scenarios?shop=main-shop.myshopify.com&scenario=fees_-20",
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when scenario is missing", async () => {
     const ctx = makeCtx();
     const app = await buildApp(ctx);
@@ -175,6 +190,7 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     const res = await app.inject({
       method: "GET",
       url: "/api/simulations/profit-scenarios?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(400);
@@ -188,7 +204,7 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     expect(buildOrdersSummaryMock).not.toHaveBeenCalled();
   });
 
-  it("returns 400 when shop is missing and ctx.shop fallback is empty", async () => {
+  it("returns 401 when shop is missing because auth now happens first", async () => {
     const ctx = makeCtx({ shop: "" });
     const app = await buildApp(ctx);
 
@@ -197,11 +213,7 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
       url: "/api/simulations/profit-scenarios?scenario=fees_-20",
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({
-      error: "shop is required (valid *.myshopify.com)",
-    });
-
+    expect(res.statusCode).toBe(401);
     expect(ctx.fetchOrders).not.toHaveBeenCalled();
   });
 
@@ -212,6 +224,7 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     const res = await app.inject({
       method: "GET",
       url: "/api/simulations/profit-scenarios?shop=main-shop.myshopify.com&scenario=not_real",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(400);
@@ -231,6 +244,7 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     const res = await app.inject({
       method: "GET",
       url: "/api/simulations/profit-scenarios?shop=main-shop.myshopify.com&scenario=fees_-20&days=14&adSpend=123.456",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -252,27 +266,27 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     expect(buildOrdersSummaryMock).toHaveBeenCalledTimes(2);
     expect(buildProfitScenarioResultMock).toHaveBeenCalledTimes(1);
 
-const calls = buildOrdersSummaryMock.mock.calls.map((args) => args[0]);
+    const calls = buildOrdersSummaryMock.mock.calls.map((args) => args[0]);
 
-expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(2);
 
-for (const call of calls) {
-  expect(call).toEqual(
-    expect.objectContaining({
-      shop: "main-shop.myshopify.com",
-      days: 14,
-      adSpend: 123.46,
-      orders: expect.any(Array),
-      cogsService: ctx.cogsService,
-      shopifyGET: ctx.shopify.get,
-      unitCostByVariant: expect.any(Map),
-    })
-  );
-}
+    for (const call of calls) {
+      expect(call).toEqual(
+        expect.objectContaining({
+          shop: "main-shop.myshopify.com",
+          days: 14,
+          adSpend: 123.46,
+          orders: expect.any(Array),
+          cogsService: ctx.cogsService,
+          shopifyGET: ctx.shopify.get,
+          unitCostByVariant: expect.any(Map),
+        })
+      );
+    }
 
-const fingerprints = calls.map((call) => call.costProfile?.meta?.fingerprint).sort();
+    const fingerprints = calls.map((call) => call.costProfile?.meta?.fingerprint).sort();
 
-expect(fingerprints).toEqual(["fp_baseline", "fp_simulated"]);
+    expect(fingerprints).toEqual(["fp_baseline", "fp_simulated"]);
 
     expect(res.json()).toEqual({
       shop: "main-shop.myshopify.com",
@@ -299,7 +313,7 @@ expect(fingerprints).toEqual(["fp_baseline", "fp_simulated"]);
     });
   });
 
-  it("uses multi-shop path when requested shop differs from ctx.shop", async () => {
+  it("uses multi-shop path when authenticated shop differs from ctx.shop", async () => {
     const foreignShopify = { get: vi.fn() };
     const foreignCostModelStore = {
       ensureLoaded: vi.fn().mockResolvedValue(undefined),
@@ -318,31 +332,32 @@ expect(fingerprints).toEqual(["fp_baseline", "fp_simulated"]);
       getCostModelOverridesStoreForShop: vi.fn().mockResolvedValue(foreignCostModelStore),
     });
 
-resolveCostProfileMock.mockReset();
-resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
-  const shippingOff = overrides?.flags?.includeShippingCost === false;
+    resolveCostProfileMock.mockReset();
+    resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
+      const shippingOff = overrides?.flags?.includeShippingCost === false;
 
-  if (shippingOff) {
-    return {
-      meta: { fingerprint: "fp_sim_foreign" },
-      payment: { feePercent: 0.03, feeFixed: 0.3 },
-      shipping: { costPerOrder: 0 },
-      flags: { includeShippingCost: false },
-    };
-  }
+      if (shippingOff) {
+        return {
+          meta: { fingerprint: "fp_sim_foreign" },
+          payment: { feePercent: 0.03, feeFixed: 0.3 },
+          shipping: { costPerOrder: 0 },
+          flags: { includeShippingCost: false },
+        };
+      }
 
-  return {
-    meta: { fingerprint: "fp_baseline_foreign" },
-    payment: { feePercent: 0.03, feeFixed: 0.3 },
-    shipping: { costPerOrder: 8 },
-  };
-});
+      return {
+        meta: { fingerprint: "fp_baseline_foreign" },
+        payment: { feePercent: 0.03, feeFixed: 0.3 },
+        shipping: { costPerOrder: 8 },
+      };
+    });
 
     const app = await buildApp(ctx);
 
     const res = await app.inject({
       method: "GET",
       url: "/api/simulations/profit-scenarios?shop=other-shop.myshopify.com&scenario=ship_off&days=7",
+      headers: authHeadersForShop("other-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -367,6 +382,20 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     });
   });
 
+  it("returns 403 for authenticated shop mismatch", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/simulations/profit-scenarios?shop=other-shop.myshopify.com&scenario=fees_-20",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
+  });
+
   it("propagates explicit downstream status", async () => {
     const ctx = makeCtx();
     ctx.fetchOrders.mockRejectedValue(
@@ -378,6 +407,7 @@ resolveCostProfileMock.mockImplementation(({ overrides }: any) => {
     const res = await app.inject({
       method: "GET",
       url: "/api/simulations/profit-scenarios?shop=main-shop.myshopify.com&scenario=fees_-20",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(403);

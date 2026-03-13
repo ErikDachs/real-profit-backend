@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import type { ShopifyCtx } from "./ctx.js";
 import { buildApp } from "../../app.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 const shop = "test-shop.myshopify.com";
 
@@ -97,8 +98,11 @@ describe("costModel.route branches", () => {
 
   beforeAll(async () => {
     process.env.PORT = "3001";
+    process.env.NODE_ENV = "test";
     process.env.SHOPIFY_STORE_DOMAIN = shop;
     process.env.SHOPIFY_ADMIN_TOKEN = "test_token";
+    process.env.SHOPIFY_API_KEY = "test_api_key";
+    process.env.SHOPIFY_API_SECRET = "test_api_secret";
     app = await buildApp();
   });
 
@@ -106,14 +110,23 @@ describe("costModel.route branches", () => {
     await app.close();
   });
 
-  it("GET /api/cost-model returns 400 for invalid shop", async () => {
+  it("GET /api/cost-model returns 401 without session token", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/cost-model?shop=${shop}`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("GET /api/cost-model returns 403 for shop mismatch", async () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/cost-model?shop=evil.com",
+      headers: authHeadersForShop(shop),
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe("shop is required (valid *.myshopify.com)");
+    expect(res.statusCode).toBe(403);
   });
 
   it("GET /api/cost-model returns persisted state when available", async () => {
@@ -126,6 +139,7 @@ describe("costModel.route branches", () => {
     const res = await app.inject({
       method: "GET",
       url: `/api/cost-model?shop=${shop}`,
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(200);
@@ -142,6 +156,7 @@ describe("costModel.route branches", () => {
       method: "PUT",
       url: `/api/cost-model?shop=${shop}`,
       payload: {},
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(400);
@@ -158,6 +173,7 @@ describe("costModel.route branches", () => {
         shippingCostPerOrder: 8,
         includeShippingCost: true,
       },
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(200);
@@ -175,6 +191,7 @@ describe("costModel.route branches", () => {
       method: "PATCH",
       url: `/api/cost-model?shop=${shop}`,
       payload: {},
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(400);
@@ -194,6 +211,7 @@ describe("costModel.route branches", () => {
         feeFixed: 0.99,
         shippingCostPerOrder: 9,
       },
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(200);
@@ -210,6 +228,7 @@ describe("costModel.route branches", () => {
     const res = await app.inject({
       method: "DELETE",
       url: `/api/cost-model?shop=${shop}`,
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(200);

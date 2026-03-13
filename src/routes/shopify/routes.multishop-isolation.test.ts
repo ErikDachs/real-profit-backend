@@ -11,6 +11,7 @@ import { CogsOverridesStore } from "../../storage/cogsOverridesStore.js";
 import { CostModelOverridesStore } from "../../storage/costModelOverridesStore.js";
 import { ActionPlanStateStore } from "../../storage/actionPlanStateStore.js";
 import { CogsService } from "../../domain/cogs.js";
+import { authedInject } from "./testEmbeddedAuth.js";
 
 const shopA = "shop-a.myshopify.com";
 const shopB = "shop-b.myshopify.com";
@@ -147,6 +148,8 @@ describe("multi-shop isolation via HTTP routes", () => {
     process.env.DATA_DIR = dataDir;
     process.env.SHOPIFY_STORE_DOMAIN = shopA;
     process.env.SHOPIFY_ADMIN_TOKEN = "legacy_token";
+    process.env.SHOPIFY_API_KEY = "test_api_key";
+    process.env.SHOPIFY_API_SECRET = "test_api_secret";
 
     app = await buildApp();
   });
@@ -155,28 +158,59 @@ describe("multi-shop isolation via HTTP routes", () => {
     await app.close();
   });
 
+  it("returns 401 for protected merchant routes without session token", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/cogs/overrides?shop=${shopA}`,
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.headers["x-shopify-retry-invalid-session-request"]).toBe("1");
+
+    const json = res.json();
+    expect(json.error).toBe("Unauthorized");
+  });
+
+  it("returns 403 when requested shop does not match authenticated shop", async () => {
+    const res = await authedInject(app, {
+      method: "GET",
+      url: `/api/cogs/overrides?shop=${shopB}`,
+      shop: shopA,
+    });
+
+    expect(res.statusCode).toBe(403);
+
+    const json = res.json();
+    expect(json.error).toBe("Forbidden");
+    expect(json.details).toContain("does not match authenticated shop");
+  });
+
   it("isolates COGS overrides between shops", async () => {
-    const putA = await app.inject({
+    const putA = await authedInject(app, {
       method: "PUT",
       url: `/api/cogs/overrides?shop=${shopA}`,
+      shop: shopA,
       payload: { variantId: 10, unitCost: 12.34, ignoreCogs: false },
     });
     expect(putA.statusCode).toBe(200);
 
-    const putB = await app.inject({
+    const putB = await authedInject(app, {
       method: "PUT",
       url: `/api/cogs/overrides?shop=${shopB}`,
+      shop: shopB,
       payload: { variantId: 10, unitCost: 99.99, ignoreCogs: true },
     });
     expect(putB.statusCode).toBe(200);
 
-    const getA = await app.inject({
+    const getA = await authedInject(app, {
       method: "GET",
       url: `/api/cogs/overrides?shop=${shopA}`,
+      shop: shopA,
     });
-    const getB = await app.inject({
+    const getB = await authedInject(app, {
       method: "GET",
       url: `/api/cogs/overrides?shop=${shopB}`,
+      shop: shopB,
     });
 
     expect(getA.statusCode).toBe(200);
@@ -199,28 +233,35 @@ describe("multi-shop isolation via HTTP routes", () => {
   });
 
   it("isolates cost-model overrides between shops", async () => {
-    const patchA = await app.inject({
+    const patchA = await authedInject(app, {
       method: "PATCH",
       url: `/api/cost-model?shop=${shopA}`,
+      shop: shopA,
       payload: { feePercent: 0.05, shippingCostPerOrder: 7 },
     });
     expect(patchA.statusCode).toBe(200);
 
-    const patchB = await app.inject({
+    const patchB = await authedInject(app, {
       method: "PATCH",
       url: `/api/cost-model?shop=${shopB}`,
+      shop: shopB,
       payload: { feePercent: 0.02, shippingCostPerOrder: 3 },
     });
     expect(patchB.statusCode).toBe(200);
 
-    const getA = await app.inject({
+    const getA = await authedInject(app, {
       method: "GET",
       url: `/api/cost-model?shop=${shopA}`,
+      shop: shopA,
     });
-    const getB = await app.inject({
+    const getB = await authedInject(app, {
       method: "GET",
       url: `/api/cost-model?shop=${shopB}`,
+      shop: shopB,
     });
+
+    expect(getA.statusCode).toBe(200);
+    expect(getB.statusCode).toBe(200);
 
     const a = getA.json();
     const b = getB.json();
@@ -236,9 +277,10 @@ describe("multi-shop isolation via HTTP routes", () => {
   });
 
   it("isolates action state between shops", async () => {
-    const patchA = await app.inject({
+    const patchA = await authedInject(app, {
       method: "PATCH",
       url: `/api/actions/state?shop=${shopA}`,
+      shop: shopA,
       payload: {
         actionId: "fix-refunds",
         status: "IN_PROGRESS",
@@ -247,9 +289,10 @@ describe("multi-shop isolation via HTTP routes", () => {
     });
     expect(patchA.statusCode).toBe(200);
 
-    const patchB = await app.inject({
+    const patchB = await authedInject(app, {
       method: "PATCH",
       url: `/api/actions/state?shop=${shopB}`,
+      shop: shopB,
       payload: {
         actionId: "fix-refunds",
         status: "DONE",
@@ -258,14 +301,19 @@ describe("multi-shop isolation via HTTP routes", () => {
     });
     expect(patchB.statusCode).toBe(200);
 
-    const getA = await app.inject({
+    const getA = await authedInject(app, {
       method: "GET",
       url: `/api/actions/state?shop=${shopA}`,
+      shop: shopA,
     });
-    const getB = await app.inject({
+    const getB = await authedInject(app, {
       method: "GET",
       url: `/api/actions/state?shop=${shopB}`,
+      shop: shopB,
     });
+
+    expect(getA.statusCode).toBe(200);
+    expect(getB.statusCode).toBe(200);
 
     const a = getA.json();
     const b = getB.json();
@@ -296,15 +344,16 @@ describe("multi-shop isolation via HTTP routes", () => {
     expect(files).toContain(`actionPlanState.${shopB}.json`);
   });
 
-  it("accepts canonicalized shop input and still hits the same shop-scoped files", async () => {
-    const res = await app.inject({
+  it("accepts canonicalized shop input when it normalizes to the authenticated shop", async () => {
+    const res = await authedInject(app, {
       method: "GET",
       url: `/api/cogs/overrides?shop=${encodeURIComponent("HTTPS://SHOP-A.MYSHOPIFY.COM/")}`,
+      shop: shopA,
     });
 
     expect(res.statusCode).toBe(200);
-    const json = res.json();
 
+    const json = res.json();
     expect(json.shop).toBe(shopA);
     expect(json.overrides).toHaveLength(1);
     expect(json.overrides[0].unitCost).toBe(12.34);

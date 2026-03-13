@@ -43,6 +43,7 @@ vi.mock("../../domain/costModel/resolve.js", () => ({
 }));
 
 import { registerOrdersProfitRoute } from "./ordersProfit.route.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 function makeCtx(overrides?: Partial<any>) {
   const cogsOverridesStore = {
@@ -108,6 +109,8 @@ async function buildApp(ctx: any) {
   const app = Fastify({ logger: false });
   (app as any).config = {
     DATA_DIR: "/tmp/test-data",
+    SHOPIFY_API_KEY: "test_api_key",
+    SHOPIFY_API_SECRET: "test_api_secret",
   };
 
   registerOrdersProfitRoute(app, ctx);
@@ -197,20 +200,16 @@ describe("ordersProfit.route", () => {
     );
   });
 
-  it("returns 400 when shop is missing and ctx fallback is empty", async () => {
-    const ctx = makeCtx({ shop: "" });
+  it("returns 401 without embedded auth token", async () => {
+    const ctx = makeCtx();
     const app = await buildApp(ctx);
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/orders/profit",
+      url: "/api/orders/profit?shop=main-shop.myshopify.com",
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({
-      error: "shop is required (valid *.myshopify.com)",
-    });
-
+    expect(res.statusCode).toBe(401);
     expect(ctx.fetchOrders).not.toHaveBeenCalled();
     expect(calculateOrderProfitMock).not.toHaveBeenCalled();
   });
@@ -222,6 +221,7 @@ describe("ordersProfit.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/profit?shop=main-shop.myshopify.com&days=30&adSpend=0",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -266,32 +266,30 @@ describe("ordersProfit.route", () => {
       persistedUpdatedAt: "2026-03-01T00:00:00.000Z",
     });
 
-    // sorted ascending by profitAfterFixedCosts / fallback chain
-// sorted ascending by final profit metric
-expect(json.orders.map((o: any) => o.id)).toEqual(["gift", "o1"]);
+    expect(json.orders.map((o: any) => o.id)).toEqual(["gift", "o1"]);
 
-const gift = json.orders.find((o: any) => o.id === "gift");
-const o1 = json.orders.find((o: any) => o.id === "o1");
+    const gift = json.orders.find((o: any) => o.id === "gift");
+    const o1 = json.orders.find((o: any) => o.id === "o1");
 
-expect(gift).toMatchObject({
-  id: "gift",
-  allocatedAdSpend: 0,
-  profitAfterAds: 50,
-  profitAfterAdsAndShipping: 50,
-  fixedCostAllocated: 0,
-  profitAfterFixedCosts: 50,
-  operatingProfit: 50,
-});
+    expect(gift).toMatchObject({
+      id: "gift",
+      allocatedAdSpend: 0,
+      profitAfterAds: 50,
+      profitAfterAdsAndShipping: 50,
+      fixedCostAllocated: 0,
+      profitAfterFixedCosts: 50,
+      operatingProfit: 50,
+    });
 
-expect(o1).toMatchObject({
-  id: "o1",
-  allocatedAdSpend: 0,
-  profitAfterAds: 65,
-  profitAfterAdsAndShipping: 61,
-  fixedCostAllocated: 10,
-  profitAfterFixedCosts: 51,
-  operatingProfit: 51,
-});
+    expect(o1).toMatchObject({
+      id: "o1",
+      allocatedAdSpend: 0,
+      profitAfterAds: 65,
+      profitAfterAdsAndShipping: 61,
+      fixedCostAllocated: 10,
+      profitAfterFixedCosts: 51,
+      operatingProfit: 51,
+    });
   });
 
   it("uses ad allocation in PER_ORDER mode only for operational rows", async () => {
@@ -301,6 +299,7 @@ expect(o1).toMatchObject({
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/profit?shop=main-shop.myshopify.com&days=30&adSpend=20",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -418,6 +417,7 @@ expect(o1).toMatchObject({
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/profit?shop=other-shop.myshopify.com&days=14&adSpend=12.5",
+      headers: authHeadersForShop("other-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -478,6 +478,7 @@ expect(o1).toMatchObject({
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/profit?shop=main-shop.myshopify.com&days=15&adSpend=0",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -496,6 +497,21 @@ expect(o1).toMatchObject({
     expect(json.orders[0]).toHaveProperty("operatingProfit");
   });
 
+  it("returns 403 when query shop does not match authenticated shop", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/orders/profit?shop=other-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
+    expect(calculateOrderProfitMock).not.toHaveBeenCalled();
+  });
+
   it("propagates explicit downstream status", async () => {
     const ctx = makeCtx();
     const app = await buildApp(ctx);
@@ -507,6 +523,7 @@ expect(o1).toMatchObject({
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/profit?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(403);

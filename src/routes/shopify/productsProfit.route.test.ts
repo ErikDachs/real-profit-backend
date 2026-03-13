@@ -28,6 +28,7 @@ vi.mock("../../domain/costModel/resolve.js", () => ({
 }));
 
 import { registerProductsProfitRoute } from "./productsProfit.route.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 function makeCtx(overrides?: Partial<any>) {
   const costModelOverridesStore = {
@@ -84,6 +85,8 @@ async function buildApp(ctx: any) {
   const app = Fastify({ logger: false });
   (app as any).config = {
     DATA_DIR: "/tmp/test-data",
+    SHOPIFY_API_KEY: "test_api_key",
+    SHOPIFY_API_SECRET: "test_api_secret",
   };
 
   registerProductsProfitRoute(app, ctx);
@@ -118,20 +121,16 @@ describe("productsProfit.route", () => {
     });
   });
 
-  it("returns 400 when shop is missing and ctx fallback is empty", async () => {
-    const ctx = makeCtx({ shop: "" });
+  it("returns 401 without embedded auth token", async () => {
+    const ctx = makeCtx();
     const app = await buildApp(ctx);
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/orders/products/profit",
+      url: "/api/orders/products/profit?shop=main-shop.myshopify.com",
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({
-      error: "shop is required (valid *.myshopify.com)",
-    });
-
+    expect(res.statusCode).toBe(401);
     expect(ctx.fetchOrders).not.toHaveBeenCalled();
     expect(buildProductsProfitMock).not.toHaveBeenCalled();
   });
@@ -143,6 +142,7 @@ describe("productsProfit.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/products/profit?shop=main-shop.myshopify.com&days=14&adSpend=0",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -219,6 +219,7 @@ describe("productsProfit.route", () => {
     await app.inject({
       method: "GET",
       url: "/api/orders/products/profit?shop=main-shop.myshopify.com&days=14&adSpend=12.345",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(buildProductsProfitMock).toHaveBeenCalledWith({
@@ -234,7 +235,7 @@ describe("productsProfit.route", () => {
     });
   });
 
-  it("uses multi-shop path when requested shop differs from ctx.shop", async () => {
+  it("uses multi-shop path when authenticated shop differs from ctx.shop", async () => {
     const foreignShopify = { get: vi.fn() };
     const foreignCostModelOverridesStore = {
       ensureLoaded: vi.fn().mockResolvedValue(undefined),
@@ -265,6 +266,7 @@ describe("productsProfit.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/products/profit?shop=other-shop.myshopify.com&days=7",
+      headers: authHeadersForShop("other-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -306,6 +308,20 @@ describe("productsProfit.route", () => {
     });
   });
 
+  it("returns 403 for authenticated shop mismatch", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/orders/products/profit?shop=other-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
+  });
+
   it("propagates explicit downstream status", async () => {
     const ctx = makeCtx();
     const app = await buildApp(ctx);
@@ -317,6 +333,7 @@ describe("productsProfit.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/orders/products/profit?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(403);

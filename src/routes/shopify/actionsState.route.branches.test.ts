@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import type { ShopifyCtx } from "./ctx.js";
 import { buildApp } from "../../app.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 const shop = "test-shop.myshopify.com";
 
@@ -97,8 +98,11 @@ describe("actionsState.route branches", () => {
 
   beforeAll(async () => {
     process.env.PORT = "3001";
+    process.env.NODE_ENV = "test";
     process.env.SHOPIFY_STORE_DOMAIN = shop;
     process.env.SHOPIFY_ADMIN_TOKEN = "test_token";
+    process.env.SHOPIFY_API_KEY = "test_api_key";
+    process.env.SHOPIFY_API_SECRET = "test_api_secret";
     app = await buildApp();
   });
 
@@ -106,14 +110,23 @@ describe("actionsState.route branches", () => {
     await app.close();
   });
 
-  it("GET /api/actions/state returns 400 for invalid shop", async () => {
+  it("GET /api/actions/state returns 401 without session token", async () => {
     const res = await app.inject({
       method: "GET",
-      url: "/api/actions/state?shop=evil.com",
+      url: `/api/actions/state?shop=${shop}`,
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe("shop is required (valid *.myshopify.com)");
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("GET /api/actions/state returns 403 for shop mismatch", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/actions/state?shop=other-shop.myshopify.com`,
+      headers: authHeadersForShop(shop),
+    });
+
+    expect(res.statusCode).toBe(403);
   });
 
   it("GET /api/actions/state returns empty list", async () => {
@@ -123,6 +136,7 @@ describe("actionsState.route branches", () => {
     const res = await app.inject({
       method: "GET",
       url: `/api/actions/state?shop=${shop}`,
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(200);
@@ -138,6 +152,7 @@ describe("actionsState.route branches", () => {
       method: "PATCH",
       url: `/api/actions/state?shop=${shop}`,
       payload: { status: "DONE" },
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(400);
@@ -155,6 +170,7 @@ describe("actionsState.route branches", () => {
         dueDate: "2026-03-31",
         dismissedReason: null,
       },
+      headers: authHeadersForShop(shop),
     });
 
     expect(res.statusCode).toBe(200);

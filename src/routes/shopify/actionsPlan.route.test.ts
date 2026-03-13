@@ -76,6 +76,7 @@ vi.mock("../../domain/simulations/runScenarioPresets.js", () => ({
 }));
 
 import { registerActionsPlanRoute } from "./actionsPlan.route.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 function makeCtx(overrides?: Partial<any>) {
   const costModelOverridesStore = {
@@ -119,6 +120,8 @@ async function buildApp(ctx: any) {
   const app = Fastify({ logger: false });
   (app as any).config = {
     DATA_DIR: "/tmp/test-data",
+    SHOPIFY_API_KEY: "test_api_key",
+    SHOPIFY_API_SECRET: "test_api_secret",
   };
 
   registerActionsPlanRoute(app, ctx);
@@ -251,20 +254,17 @@ describe("actionsPlan.route", () => {
     });
   });
 
-  it("returns 400 when shop is missing and ctx.shop fallback is empty", async () => {
-    const ctx = makeCtx({ shop: "" });
+  it("returns 401 without embedded auth token", async () => {
+    const ctx = makeCtx();
     const app = await buildApp(ctx);
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/actions/plan",
+      url: "/api/actions/plan?shop=main-shop.myshopify.com",
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({
-      error: "shop is required (valid *.myshopify.com)",
-    });
-
+    expect(res.statusCode).toBe(401);
+    expect(res.headers["x-shopify-retry-invalid-session-request"]).toBe("1");
     expect(ctx.fetchOrders).not.toHaveBeenCalled();
     expect(ctx.fetchOrdersForShop).not.toHaveBeenCalled();
   });
@@ -286,6 +286,7 @@ describe("actionsPlan.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/actions/plan?shop=main-shop.myshopify.com&days=30&limit=5",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -364,6 +365,7 @@ describe("actionsPlan.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/actions/plan?shop=other-shop.myshopify.com&days=14",
+      headers: authHeadersForShop("other-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -404,6 +406,7 @@ describe("actionsPlan.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/actions/plan?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -414,6 +417,20 @@ describe("actionsPlan.route", () => {
       baselineSummary: null,
       byOpportunity: [],
     });
+  });
+
+  it("returns 403 when query shop does not match authenticated shop", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/actions/plan?shop=other-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
   });
 
   it("propagates explicit error status from downstream failure", async () => {
@@ -428,6 +445,7 @@ describe("actionsPlan.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/actions/plan?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(403);

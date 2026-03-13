@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { ShopifyCtx } from "../shopify/ctx.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 // ---------- Mock: createShopifyCtx (keine echten Shopify Calls, kein File IO)
 const fakeOrders = [
@@ -68,10 +69,8 @@ const cogsService = {
 const fakeCtx: ShopifyCtx = {
   shop: "test-shop.myshopify.com",
 
-  // legacy single-shop client used by existing routes
   shopify: { get: async (_path: string) => ({}) } as any,
 
-  // multi-shop helpers
   shopsStore: {
     ensureLoaded: async () => {},
     getAccessTokenOrThrow: async (_shop: string) => "test_token",
@@ -91,7 +90,6 @@ const fakeCtx: ShopifyCtx = {
   costModelOverridesStore,
   actionPlanStateStore,
 
-  // legacy methods used by existing routes
   fetchOrders: async (_days: number) => fakeOrders,
   fetchOrderById: async (_orderId: string) => fakeOrders[0],
 
@@ -337,7 +335,6 @@ vi.mock("../../domain/health/profitHealth", () => {
   };
 });
 
-// ---------- IMPORTANT: buildApp import AFTER mocks
 import { buildApp } from "../../app.js";
 
 describe("Route contracts (shopify routes)", () => {
@@ -347,6 +344,8 @@ describe("Route contracts (shopify routes)", () => {
     process.env.PORT = "3001";
     process.env.SHOPIFY_STORE_DOMAIN = "test-shop.myshopify.com";
     process.env.SHOPIFY_ADMIN_TOKEN = "test_token";
+    process.env.SHOPIFY_API_KEY = "test_api_key";
+    process.env.SHOPIFY_API_SECRET = "test_api_secret";
 
     app = await buildApp();
   });
@@ -354,6 +353,10 @@ describe("Route contracts (shopify routes)", () => {
   afterAll(async () => {
     await app.close();
   });
+
+  function headers(shop = fakeCtx.shop) {
+    return authHeadersForShop(shop, undefined, { app });
+  }
 
   it("GET /health", async () => {
     const res = await app.inject({ method: "GET", url: "/health" });
@@ -365,7 +368,11 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/orders/summary contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/orders/summary?days=30&adSpend=0" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/summary?shop=${fakeCtx.shop}&days=30&adSpend=0`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(json.shop).toBe(fakeCtx.shop);
@@ -375,7 +382,11 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/orders/profit contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/orders/profit?days=30" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/profit?shop=${fakeCtx.shop}&days=30`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(json.shop).toBe(fakeCtx.shop);
@@ -392,7 +403,11 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/orders/daily-profit contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/orders/daily-profit?days=30" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/daily-profit?shop=${fakeCtx.shop}&days=30`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(json.shop).toBe(fakeCtx.shop);
@@ -403,7 +418,11 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/orders/products/profit contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/orders/products/profit?days=30" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/products/profit?shop=${fakeCtx.shop}&days=30`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(json.shop).toBe(fakeCtx.shop);
@@ -418,7 +437,11 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/insights/profit-killers contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/insights/profit-killers?days=30&limit=10" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/insights/profit-killers?shop=${fakeCtx.shop}&days=30&limit=10`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(json.shop).toBe(fakeCtx.shop);
@@ -428,7 +451,11 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/opportunities/deep-dive contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/opportunities/deep-dive?days=30&limit=10" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/opportunities/deep-dive?shop=${fakeCtx.shop}&days=30&limit=10`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(json.shop).toBe(fakeCtx.shop);
@@ -437,7 +464,11 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/cogs/overrides contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/cogs/overrides" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/cogs/overrides?shop=${fakeCtx.shop}`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(Array.isArray(json.overrides)).toBe(true);
@@ -446,7 +477,8 @@ describe("Route contracts (shopify routes)", () => {
   it("PUT /api/cogs/overrides validates body (400 on missing/invalid variantId)", async () => {
     const res = await app.inject({
       method: "PUT",
-      url: "/api/cogs/overrides",
+      url: `/api/cogs/overrides?shop=${fakeCtx.shop}`,
+      headers: headers(),
       payload: { variantId: 0, unitCost: 12.34 },
     });
     expect(res.statusCode).toBe(400);
@@ -457,7 +489,8 @@ describe("Route contracts (shopify routes)", () => {
   it("PUT /api/cogs/overrides ok contract", async () => {
     const res = await app.inject({
       method: "PUT",
-      url: "/api/cogs/overrides",
+      url: `/api/cogs/overrides?shop=${fakeCtx.shop}`,
+      headers: headers(),
       payload: { variantId: 123, unitCost: 12.34, ignoreCogs: false },
     });
     expect(res.statusCode).toBe(200);
@@ -467,11 +500,34 @@ describe("Route contracts (shopify routes)", () => {
   });
 
   it("GET /api/cogs/missing contract", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/cogs/missing?days=30" });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/cogs/missing?shop=${fakeCtx.shop}&days=30`,
+      headers: headers(),
+    });
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(json).toHaveProperty("days");
     expect(json).toHaveProperty("count");
     expect(Array.isArray(json.missing)).toBe(true);
+  });
+
+  it("merchant routes return 401 without token", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/summary?shop=${fakeCtx.shop}&days=30`,
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("merchant routes return 403 on authenticated shop mismatch", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/summary?shop=other-shop.myshopify.com&days=30`,
+      headers: headers(fakeCtx.shop),
+    });
+
+    expect(res.statusCode).toBe(403);
   });
 });

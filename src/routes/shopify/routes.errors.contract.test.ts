@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { ShopifyCtx } from "../shopify/ctx.js";
+import { authedInject } from "../shopify/testEmbeddedAuth.js";
 
 function mkErr(status: number, message = "boom") {
   const e: any = new Error(message);
@@ -92,7 +93,7 @@ const baseCtx: ShopifyCtx = {
   } as any,
 };
 
-vi.mock("../shopify/ctx", () => {
+vi.mock("../shopify/ctx.js", () => {
   return {
     createShopifyCtx: async () => baseCtx,
   };
@@ -259,11 +260,15 @@ import { buildApp } from "../../app.js";
 
 describe("Route error contracts", () => {
   let app: any;
+  const shop = "test-shop.myshopify.com";
 
   beforeAll(async () => {
     process.env.PORT = "3001";
-    process.env.SHOPIFY_STORE_DOMAIN = "test-shop.myshopify.com";
+    process.env.NODE_ENV = "test";
+    process.env.SHOPIFY_STORE_DOMAIN = shop;
     process.env.SHOPIFY_ADMIN_TOKEN = "test_token";
+    process.env.SHOPIFY_API_KEY = "test_api_key";
+    process.env.SHOPIFY_API_SECRET = "test_api_secret";
     app = await buildApp();
   });
 
@@ -271,10 +276,28 @@ describe("Route error contracts", () => {
     await app.close();
   });
 
+  it("returns 401 for protected merchant routes without session token", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/summary?shop=${shop}&days=30`,
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.headers["x-shopify-retry-invalid-session-request"]).toBe("1");
+
+    const json = res.json();
+    expect(json.error).toBe("Unauthorized");
+  });
+
   it("propagates ctx.fetchOrders error.status (401)", async () => {
     const spy = vi.spyOn(baseCtx, "fetchOrders").mockRejectedValueOnce(mkErr(401, "Unauthorized"));
 
-    const res = await app.inject({ method: "GET", url: "/api/orders/summary?days=30" });
+    const res = await authedInject(app, {
+      method: "GET",
+      url: `/api/orders/summary?shop=${shop}&days=30`,
+      shop,
+    });
+
     expect(res.statusCode).toBe(401);
 
     const json = res.json();
@@ -287,7 +310,12 @@ describe("Route error contracts", () => {
   it("propagates ctx.fetchOrders error.status (429 rate limited)", async () => {
     const spy = vi.spyOn(baseCtx, "fetchOrders").mockRejectedValueOnce(mkErr(429, "Too Many Requests"));
 
-    const res = await app.inject({ method: "GET", url: "/api/orders/profit?days=30" });
+    const res = await authedInject(app, {
+      method: "GET",
+      url: `/api/orders/profit?shop=${shop}&days=30`,
+      shop,
+    });
+
     expect(res.statusCode).toBe(429);
 
     const json = res.json();
@@ -299,7 +327,12 @@ describe("Route error contracts", () => {
   it("falls back to 500 when error.status is missing", async () => {
     const spy = vi.spyOn(baseCtx, "fetchOrders").mockRejectedValueOnce(new Error("No status"));
 
-    const res = await app.inject({ method: "GET", url: "/api/orders/daily-profit?days=30" });
+    const res = await authedInject(app, {
+      method: "GET",
+      url: `/api/orders/daily-profit?shop=${shop}&days=30`,
+      shop,
+    });
+
     expect(res.statusCode).toBe(500);
 
     const json = res.json();
@@ -310,9 +343,10 @@ describe("Route error contracts", () => {
   });
 
   it("PUT /api/cogs/overrides returns 400 with error contract when variantId invalid", async () => {
-    const res = await app.inject({
+    const res = await authedInject(app, {
       method: "PUT",
-      url: "/api/cogs/overrides",
+      url: `/api/cogs/overrides?shop=${shop}`,
+      shop,
       payload: { variantId: -1, unitCost: 10 },
     });
 

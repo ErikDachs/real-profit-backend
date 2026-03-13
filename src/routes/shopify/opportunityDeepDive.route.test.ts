@@ -79,6 +79,7 @@ vi.mock("../../domain/opportunities/deepDive.js", () => ({
 }));
 
 import { registerOpportunityDeepDiveRoute } from "./opportunityDeepDive.route.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 function makeCtx(overrides?: Partial<any>) {
   const cogsOverridesStore = {
@@ -142,6 +143,8 @@ async function buildApp(ctx: any) {
   const app = Fastify({ logger: false });
   (app as any).config = {
     DATA_DIR: "/tmp/test-data",
+    SHOPIFY_API_KEY: "test_api_key",
+    SHOPIFY_API_SECRET: "test_api_secret",
   };
 
   registerOpportunityDeepDiveRoute(app, ctx);
@@ -262,7 +265,21 @@ describe("opportunityDeepDive.route", () => {
     });
   });
 
-  it("returns 400 when shop is missing and ctx fallback is empty", async () => {
+  it("returns 401 without embedded auth token", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/opportunities/deep-dive?shop=main-shop.myshopify.com",
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
+    expect(buildOpportunityDeepDiveMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when shop is missing because auth now happens first", async () => {
     const ctx = makeCtx({ shop: "" });
     const app = await buildApp(ctx);
 
@@ -271,11 +288,7 @@ describe("opportunityDeepDive.route", () => {
       url: "/api/opportunities/deep-dive",
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({
-      error: "shop is required (valid *.myshopify.com)",
-    });
-
+    expect(res.statusCode).toBe(401);
     expect(ctx.fetchOrders).not.toHaveBeenCalled();
     expect(buildOpportunityDeepDiveMock).not.toHaveBeenCalled();
   });
@@ -287,6 +300,7 @@ describe("opportunityDeepDive.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/opportunities/deep-dive?shop=main-shop.myshopify.com&days=14&limit=7&adSpend=12.345&currentRoas=1.9&type=HIGH_FEES",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -428,11 +442,11 @@ describe("opportunityDeepDive.route", () => {
       currency: "USD",
       refunds: {
         lossInPeriod: 10,
-        refundRatePct: 10 / 150 * 100,
+        refundRatePct: (10 / 150) * 100,
       },
       fees: {
         lossInPeriod: 7,
-        feePctOfNet: 7 / 140 * 100,
+        feePctOfNet: (7 / 140) * 100,
       },
       missingCogsCount: 2,
       missingCogsLossInPeriod: 0,
@@ -587,6 +601,7 @@ describe("opportunityDeepDive.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/opportunities/deep-dive?shop=other-shop.myshopify.com&days=7&limit=3",
+      headers: authHeadersForShop("other-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -618,7 +633,7 @@ describe("opportunityDeepDive.route", () => {
       },
       fees: {
         lossInPeriod: 8,
-        feePctOfNet: 8 / 200 * 100,
+        feePctOfNet: (8 / 200) * 100,
       },
       missingCogsCount: 0,
       missingCogsLossInPeriod: 0,
@@ -646,10 +661,13 @@ describe("opportunityDeepDive.route", () => {
     const ctx = makeCtx();
     const app = await buildApp(ctx);
 
-    await app.inject({
+    const res = await app.inject({
       method: "GET",
       url: "/api/opportunities/deep-dive?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
+
+    expect(res.statusCode).toBe(200);
 
     const summaryArg = buildOrdersSummaryMock.mock.calls[0][0];
     expect(summaryArg.isIgnoredVariant(123)).toBe(false);
@@ -659,6 +677,20 @@ describe("opportunityDeepDive.route", () => {
 
     expect(ctx.cogsOverridesStore.isIgnoredSync).toHaveBeenCalledWith(123);
     expect(ctx.cogsOverridesStore.isIgnoredSync).toHaveBeenCalledWith(456);
+  });
+
+  it("returns 403 for authenticated shop mismatch", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/opportunities/deep-dive?shop=other-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
   });
 
   it("propagates explicit downstream status", async () => {
@@ -672,6 +704,7 @@ describe("opportunityDeepDive.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/opportunities/deep-dive?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(403);

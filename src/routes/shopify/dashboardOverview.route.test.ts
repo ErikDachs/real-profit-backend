@@ -67,6 +67,7 @@ vi.mock("../../domain/actions/buildActionPlan.js", () => ({
 }));
 
 import { registerDashboardOverviewRoute } from "./dashboardOverview.route.js";
+import { authHeadersForShop } from "./testEmbeddedAuth.js";
 
 function makeCtx(overrides?: Partial<any>) {
   const cogsOverridesStore = {
@@ -125,6 +126,8 @@ async function buildApp(ctx: any) {
   const app = Fastify({ logger: false });
   (app as any).config = {
     DATA_DIR: "/tmp/test-data",
+    SHOPIFY_API_KEY: "test_api_key",
+    SHOPIFY_API_SECRET: "test_api_secret",
   };
 
   registerDashboardOverviewRoute(app, ctx);
@@ -220,20 +223,16 @@ describe("dashboardOverview.route", () => {
     });
   });
 
-  it("returns 400 when shop is missing and ctx fallback is empty", async () => {
-    const ctx = makeCtx({ shop: "" });
+  it("returns 401 without embedded auth token", async () => {
+    const ctx = makeCtx();
     const app = await buildApp(ctx);
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/dashboard/overview",
+      url: "/api/dashboard/overview?shop=main-shop.myshopify.com",
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({
-      error: "shop is required (valid *.myshopify.com)",
-    });
-
+    expect(res.statusCode).toBe(401);
     expect(ctx.fetchOrders).not.toHaveBeenCalled();
     expect(buildOrdersSummaryMock).not.toHaveBeenCalled();
   });
@@ -245,6 +244,7 @@ describe("dashboardOverview.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/dashboard/overview?shop=main-shop.myshopify.com&days=30&adSpend=12.34&currentRoas=1.8&actionsLimit=5",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -355,7 +355,7 @@ describe("dashboardOverview.route", () => {
     });
   });
 
-  it("uses raw.orders fallback and multi-shop branch when shop differs", async () => {
+  it("uses raw.orders fallback and multi-shop branch when authenticated shop differs", async () => {
     const foreignShopify = { get: vi.fn() };
     const foreignCogsOverridesStore = {
       isIgnoredSync: vi.fn().mockReturnValue(false),
@@ -381,6 +381,7 @@ describe("dashboardOverview.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/dashboard/overview?shop=other-shop.myshopify.com&days=14&adSpend=0",
+      headers: authHeadersForShop("other-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -409,6 +410,7 @@ describe("dashboardOverview.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/dashboard/overview?shop=main-shop.myshopify.com&adSpend=0",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -446,10 +448,25 @@ describe("dashboardOverview.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/dashboard/overview?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().meta.currency).toBe("USD");
+  });
+
+  it("returns 403 for authenticated shop mismatch", async () => {
+    const ctx = makeCtx();
+    const app = await buildApp(ctx);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/dashboard/overview?shop=other-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(ctx.fetchOrders).not.toHaveBeenCalled();
   });
 
   it("returns 500 on unexpected downstream error", async () => {
@@ -461,6 +478,7 @@ describe("dashboardOverview.route", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/dashboard/overview?shop=main-shop.myshopify.com",
+      headers: authHeadersForShop("main-shop.myshopify.com", undefined, { app }),
     });
 
     expect(res.statusCode).toBe(500);

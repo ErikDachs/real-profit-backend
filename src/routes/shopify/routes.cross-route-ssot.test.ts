@@ -10,6 +10,7 @@ import { CogsOverridesStore } from "../../storage/cogsOverridesStore.js";
 import { CostModelOverridesStore } from "../../storage/costModelOverridesStore.js";
 import { ActionPlanStateStore } from "../../storage/actionPlanStateStore.js";
 import { CogsService } from "../../domain/cogs.js";
+import { authedInject } from "./testEmbeddedAuth.js";
 
 const shop = "ssot-shop.myshopify.com";
 let dataDir = "";
@@ -107,6 +108,8 @@ describe("cross-route SSOT consistency", () => {
     process.env.DATA_DIR = dataDir;
     process.env.SHOPIFY_STORE_DOMAIN = shop;
     process.env.SHOPIFY_ADMIN_TOKEN = "legacy_token";
+    process.env.SHOPIFY_API_KEY = "test_api_key";
+    process.env.SHOPIFY_API_SECRET = "test_api_secret";
 
     app = await buildApp();
   });
@@ -115,18 +118,30 @@ describe("cross-route SSOT consistency", () => {
     await app.close();
   });
 
-  it("keeps summary, daily totals, and dashboard totals aligned for core metrics", async () => {
-    const summaryRes = await app.inject({
+  it("returns 401 without session token on protected cross-route reads", async () => {
+    const res = await app.inject({
       method: "GET",
       url: `/api/orders/summary?shop=${shop}&days=30&adSpend=0`,
     });
-    const dailyRes = await app.inject({
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("keeps summary, daily totals, and dashboard totals aligned for core metrics", async () => {
+    const summaryRes = await authedInject(app, {
+      method: "GET",
+      url: `/api/orders/summary?shop=${shop}&days=30&adSpend=0`,
+      shop,
+    });
+    const dailyRes = await authedInject(app, {
       method: "GET",
       url: `/api/orders/daily-profit?shop=${shop}&days=30&adSpend=0`,
+      shop,
     });
-    const dashRes = await app.inject({
+    const dashRes = await authedInject(app, {
       method: "GET",
       url: `/api/dashboard/overview?shop=${shop}&days=30&adSpend=0`,
+      shop,
     });
 
     expect(summaryRes.statusCode).toBe(200);
@@ -175,22 +190,31 @@ describe("cross-route SSOT consistency", () => {
   });
 
   it("keeps cost model fingerprint aligned across endpoints for same input", async () => {
-    const summaryRes = await app.inject({
+    const summaryRes = await authedInject(app, {
       method: "GET",
       url: `/api/orders/summary?shop=${shop}&days=30&adSpend=0`,
+      shop,
     });
-    const dailyRes = await app.inject({
+    const dailyRes = await authedInject(app, {
       method: "GET",
       url: `/api/orders/daily-profit?shop=${shop}&days=30&adSpend=0`,
+      shop,
     });
-    const ordersProfitRes = await app.inject({
+    const ordersProfitRes = await authedInject(app, {
       method: "GET",
       url: `/api/orders/profit?shop=${shop}&days=30&adSpend=0`,
+      shop,
     });
-    const dashRes = await app.inject({
+    const dashRes = await authedInject(app, {
       method: "GET",
       url: `/api/dashboard/overview?shop=${shop}&days=30&adSpend=0`,
+      shop,
     });
+
+    expect(summaryRes.statusCode).toBe(200);
+    expect(dailyRes.statusCode).toBe(200);
+    expect(ordersProfitRes.statusCode).toBe(200);
+    expect(dashRes.statusCode).toBe(200);
 
     const summary = summaryRes.json();
     const daily = dailyRes.json();
@@ -213,14 +237,19 @@ describe("cross-route SSOT consistency", () => {
   });
 
   it("keeps orders count aligned between summary and daily totals", async () => {
-    const summaryRes = await app.inject({
+    const summaryRes = await authedInject(app, {
       method: "GET",
       url: `/api/orders/summary?shop=${shop}&days=30`,
+      shop,
     });
-    const dailyRes = await app.inject({
+    const dailyRes = await authedInject(app, {
       method: "GET",
       url: `/api/orders/daily-profit?shop=${shop}&days=30`,
+      shop,
     });
+
+    expect(summaryRes.statusCode).toBe(200);
+    expect(dailyRes.statusCode).toBe(200);
 
     const summary = summaryRes.json();
     const daily = dailyRes.json();

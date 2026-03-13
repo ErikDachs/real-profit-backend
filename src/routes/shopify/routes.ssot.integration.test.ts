@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { ShopifyCtx } from "./ctx.js";
 import { buildApp } from "../../app.js";
+import { authedInject } from "./testEmbeddedAuth.js";
 
 // ---- fake orders
 const fakeOrders = [
@@ -106,8 +107,7 @@ const fakeCtx: ShopifyCtx = {
   } as any,
 };
 
-// mock ctx factory only
-vi.mock("./ctx", () => {
+vi.mock("./ctx.js", () => {
   return {
     createShopifyCtx: async () => fakeCtx,
   };
@@ -115,11 +115,15 @@ vi.mock("./ctx", () => {
 
 describe("SSOT integration (routes)", () => {
   let app: any;
+  const shop = "test-shop.myshopify.com";
 
   beforeAll(async () => {
     process.env.PORT = "3001";
-    process.env.SHOPIFY_STORE_DOMAIN = "test-shop.myshopify.com";
+    process.env.NODE_ENV = "test";
+    process.env.SHOPIFY_STORE_DOMAIN = shop;
     process.env.SHOPIFY_ADMIN_TOKEN = "test_token";
+    process.env.SHOPIFY_API_KEY = "test_api_key";
+    process.env.SHOPIFY_API_SECRET = "test_api_secret";
     app = await buildApp();
   });
 
@@ -127,8 +131,23 @@ describe("SSOT integration (routes)", () => {
     await app.close();
   });
 
-  it("GET /api/orders/profit includes operatingProfit and is consistent", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/orders/profit?days=30&adSpend=0" });
+  it("GET /api/orders/profit returns 401 without embedded session token", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/orders/profit?shop=${shop}&days=30&adSpend=0`,
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.headers["x-shopify-retry-invalid-session-request"]).toBe("1");
+  });
+
+  it("GET /api/orders/profit includes operatingProfit and is consistent when authenticated", async () => {
+    const res = await authedInject(app, {
+      method: "GET",
+      url: `/api/orders/profit?shop=${shop}&days=30&adSpend=0`,
+      shop,
+    });
+
     expect(res.statusCode).toBe(200);
     const json = res.json();
     expect(Array.isArray(json.orders)).toBe(true);
@@ -141,8 +160,13 @@ describe("SSOT integration (routes)", () => {
     expect(row.operatingProfit).toBe(row.profitAfterFixedCosts);
   });
 
-  it("GET /api/orders/daily-profit has deterministic structure and health exists", async () => {
-    const res = await app.inject({ method: "GET", url: "/api/orders/daily-profit?days=30&adSpend=0" });
+  it("GET /api/orders/daily-profit has deterministic structure and health exists when authenticated", async () => {
+    const res = await authedInject(app, {
+      method: "GET",
+      url: `/api/orders/daily-profit?shop=${shop}&days=30&adSpend=0`,
+      shop,
+    });
+
     expect(res.statusCode).toBe(200);
     const json = res.json();
 
