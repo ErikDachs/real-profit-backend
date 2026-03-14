@@ -82,6 +82,41 @@ function buildAvailablePlans(currentPlan: BillingPlanKey): BillingStatusPlanSumm
   }));
 }
 
+function readHost(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  return raw || null;
+}
+
+function buildEmbeddedAppRedirect(params: {
+  shop: string;
+  host?: string | null;
+  route?: string | null;
+  billing?: string | null;
+  plan?: string | null;
+}) {
+  const parts = new URLSearchParams();
+
+  parts.set("shop", params.shop);
+
+  if (params.host) {
+    parts.set("host", params.host);
+  }
+
+  if (params.route) {
+    parts.set("route", params.route);
+  }
+
+  if (params.billing) {
+    parts.set("billing", params.billing);
+  }
+
+  if (params.plan) {
+    parts.set("plan", params.plan);
+  }
+
+  return `/app?${parts.toString()}`;
+}
+
 export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
   const apiVersion = String((app.config as any).SHOPIFY_API_VERSION || "2026-01");
   const appUrl = cleanAppUrl(String(app.config.APP_URL || ""));
@@ -200,6 +235,8 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
       const q = req.query as any;
 
       const requestedShop = parseShop(q) || parseShop(body);
+      const host = readHost(q?.host) || readHost(body?.host);
+
       const auth = await requireEmbeddedAuthAndMatchShop(app, req, reply, requestedShop);
       if (!auth) return;
 
@@ -211,11 +248,13 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
           ok: true,
           shop,
           plan: plan.key,
-          confirmationUrl:
-            `/app?shop=${encodeURIComponent(shop)}` +
-            `&route=billing` +
-            `&billing=bypass` +
-            `&plan=${encodeURIComponent(plan.key)}`,
+          confirmationUrl: buildEmbeddedAppRedirect({
+            shop,
+            host,
+            route: "billing",
+            billing: "bypass",
+            plan: plan.key,
+          }),
         });
       }
 
@@ -231,18 +270,21 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
           shop,
           plan: plan.key,
           alreadyOnPlan: true,
-          confirmationUrl:
-            `/app?shop=${encodeURIComponent(shop)}` +
-            `&route=billing` +
-            `&billing=unchanged` +
-            `&plan=${encodeURIComponent(plan.key)}`,
+          confirmationUrl: buildEmbeddedAppRedirect({
+            shop,
+            host,
+            route: "billing",
+            billing: "unchanged",
+            plan: plan.key,
+          }),
         });
       }
 
       const returnUrl =
         `${appUrl}/api/billing/confirm` +
         `?shop=${encodeURIComponent(shop)}` +
-        `&plan=${encodeURIComponent(plan.key)}`;
+        `&plan=${encodeURIComponent(plan.key)}` +
+        (host ? `&host=${encodeURIComponent(host)}` : "");
 
       const result = await createRecurringSubscription({
         shopify,
@@ -278,6 +320,7 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
     const q = req.query as any;
     const shop = normalizeShopDomain(String(q?.shop || ""));
     const requestedPlan = String(q?.plan || "").trim();
+    const host = readHost(q?.host);
 
     if (!shop) {
       return reply.status(400).send({
@@ -291,11 +334,13 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
         ? requestedPlan
         : resolveBypassPlan(app);
 
-      const redirectUrl =
-        `/app?shop=${encodeURIComponent(shop)}` +
-        `&route=billing` +
-        `&billing=confirmed` +
-        `&plan=${encodeURIComponent(targetPlan)}`;
+      const redirectUrl = buildEmbeddedAppRedirect({
+        shop,
+        host,
+        route: "billing",
+        billing: "confirmed",
+        plan: targetPlan,
+      });
 
       return reply.redirect(redirectUrl, 302);
     }
@@ -323,11 +368,13 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
       activeSub?.planKey ||
       (isBillingPlanKey(requestedPlan) ? requestedPlan : "starter");
 
-    const redirectUrl =
-      `/app?shop=${encodeURIComponent(shop)}` +
-      `&route=billing` +
-      `&billing=confirmed` +
-      `&plan=${encodeURIComponent(targetPlan)}`;
+    const redirectUrl = buildEmbeddedAppRedirect({
+      shop,
+      host,
+      route: "billing",
+      billing: "confirmed",
+      plan: targetPlan,
+    });
 
     return reply.redirect(redirectUrl, 302);
   });
