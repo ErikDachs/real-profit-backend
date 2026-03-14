@@ -4,6 +4,7 @@ import { requireEmbeddedAuthAndMatchShop } from "./auth.js";
 import { parseShop } from "./helpers.js";
 import {
   getBillingPlanOrThrow,
+  getBillingPlans,
   isBillingPlanKey,
   type BillingPlanKey,
 } from "../../domain/billing/plans.js";
@@ -13,6 +14,14 @@ import {
 } from "../../integrations/shopify/billing.js";
 import { normalizeShopDomain } from "../../storage/shopsStore.js";
 
+type BillingStatusPlanSummary = {
+  key: BillingPlanKey;
+  name: string;
+  priceUsd: number;
+  description: string;
+  isCurrent: boolean;
+};
+
 type BillingStatusResponse = {
   shop: string;
   active: boolean;
@@ -20,9 +29,13 @@ type BillingStatusResponse = {
   subscriptionId: string | null;
   subscriptionName: string | null;
   status: string | null;
+  statusLabel: string;
   trialDays: number;
   currentPeriodEnd: string | null;
   test: boolean;
+  isBypass: boolean;
+  isTrial: boolean;
+  availablePlans: BillingStatusPlanSummary[];
 };
 
 function cleanAppUrl(input: string) {
@@ -36,6 +49,37 @@ function inferPlanFromStoredOrDefault(value: unknown): BillingPlanKey {
 function resolveBypassPlan(app: FastifyInstance): BillingPlanKey {
   const raw = String((app.config as any).BILLING_BYPASS_PLAN || "pro").trim();
   return isBillingPlanKey(raw) ? raw : "pro";
+}
+
+function mapStatusLabel(params: {
+  active: boolean;
+  status: string | null;
+  test: boolean;
+  isBypass: boolean;
+  trialDays: number;
+}) {
+  if (params.isBypass) return "Dev bypass";
+  if (!params.active) return "Inactive";
+
+  const status = String(params.status || "").toUpperCase();
+
+  if (params.trialDays > 0) return `Trial (${params.trialDays} days)`;
+  if (params.test) return "Active (test)";
+  if (status === "ACTIVE") return "Active";
+  if (status === "CANCELLED") return "Cancelled";
+  if (status === "PENDING") return "Pending";
+
+  return params.status || "Active";
+}
+
+function buildAvailablePlans(currentPlan: BillingPlanKey): BillingStatusPlanSummary[] {
+  return getBillingPlans().map((plan) => ({
+    key: plan.key,
+    name: plan.name,
+    priceUsd: plan.priceUsd,
+    description: plan.description,
+    isCurrent: plan.key === currentPlan,
+  }));
 }
 
 export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
@@ -73,9 +117,13 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
         subscriptionId: "dev-bypass",
         subscriptionName: `Dev Bypass ${bypassPlan}`,
         status: "ACTIVE",
+        statusLabel: "Dev bypass",
         trialDays: 0,
         currentPeriodEnd: null,
         test: true,
+        isBypass: true,
+        isTrial: false,
+        availablePlans: buildAvailablePlans(bypassPlan),
       };
 
       return reply.send(out);
@@ -106,26 +154,41 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
         subscriptionId: activeSub.id,
         subscriptionName: activeSub.name,
         status: activeSub.status,
+        statusLabel: mapStatusLabel({
+          active: true,
+          status: activeSub.status,
+          test: activeSub.test,
+          isBypass: false,
+          trialDays: activeSub.trialDays,
+        }),
         trialDays: activeSub.trialDays,
         currentPeriodEnd: activeSub.currentPeriodEnd,
         test: activeSub.test,
+        isBypass: false,
+        isTrial: activeSub.trialDays > 0,
+        availablePlans: buildAvailablePlans(activeSub.planKey),
       };
 
       return reply.send(out);
     }
 
     const stored = await ctx.shopsStore.get(shop);
+    const currentPlan = inferPlanFromStoredOrDefault(stored?.billing?.plan);
 
     const out: BillingStatusResponse = {
       shop,
       active: false,
-      plan: inferPlanFromStoredOrDefault(stored?.billing?.plan),
+      plan: currentPlan,
       subscriptionId: stored?.billing?.subscriptionId ?? null,
       subscriptionName: stored?.billing?.subscriptionName ?? null,
       status: stored?.billing?.status ?? null,
+      statusLabel: "Inactive",
       trialDays: Number(stored?.billing?.trialDays ?? 0),
       currentPeriodEnd: stored?.billing?.currentPeriodEnd ?? null,
       test: Boolean(stored?.billing?.test ?? false),
+      isBypass: false,
+      isTrial: Number(stored?.billing?.trialDays ?? 0) > 0,
+      availablePlans: buildAvailablePlans(currentPlan),
     };
 
     return reply.send(out);
@@ -141,22 +204,40 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
       if (!auth) return;
 
       const shop = auth.shop;
+      const plan = getBillingPlanOrThrow(body?.plan);
 
       if (billingBypass) {
-        const bypassPlan = getBillingPlanOrThrow(body?.plan ?? resolveBypassPlan(app).toString());
-
         return reply.send({
           ok: true,
           shop,
-          plan: bypassPlan.key,
-          confirmationUrl: `/app?shop=${encodeURIComponent(shop)}&billing=bypass&plan=${encodeURIComponent(
-            bypassPlan.key
-          )}`,
+          plan: plan.key,
+          confirmationUrl:
+            `/app?shop=${encodeURIComponent(shop)}` +
+            `&route=billing` +
+            `&billing=bypass` +
+            `&plan=${encodeURIComponent(plan.key)}`,
         });
       }
 
-      const plan = getBillingPlanOrThrow(body?.plan);
       const shopify = await ctx.createShopifyForShop(shop);
+      const existing = await getPrimaryActiveSubscription({
+        shopify,
+        apiVersion,
+      });
+
+      if (existing?.planKey === plan.key) {
+        return reply.send({
+          ok: true,
+          shop,
+          plan: plan.key,
+          alreadyOnPlan: true,
+          confirmationUrl:
+            `/app?shop=${encodeURIComponent(shop)}` +
+            `&route=billing` +
+            `&billing=unchanged` +
+            `&plan=${encodeURIComponent(plan.key)}`,
+        });
+      }
 
       const returnUrl =
         `${appUrl}/api/billing/confirm` +
@@ -206,9 +287,13 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
     }
 
     if (billingBypass) {
-      const targetPlan = isBillingPlanKey(requestedPlan) ? requestedPlan : resolveBypassPlan(app);
+      const targetPlan = isBillingPlanKey(requestedPlan)
+        ? requestedPlan
+        : resolveBypassPlan(app);
+
       const redirectUrl =
         `/app?shop=${encodeURIComponent(shop)}` +
+        `&route=billing` +
         `&billing=confirmed` +
         `&plan=${encodeURIComponent(targetPlan)}`;
 
@@ -240,6 +325,7 @@ export function registerBillingRoutes(app: FastifyInstance, ctx: ShopifyCtx) {
 
     const redirectUrl =
       `/app?shop=${encodeURIComponent(shop)}` +
+      `&route=billing` +
       `&billing=confirmed` +
       `&plan=${encodeURIComponent(targetPlan)}`;
 

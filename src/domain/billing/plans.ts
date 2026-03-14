@@ -4,23 +4,34 @@ export type BillingPlanDef = {
   key: BillingPlanKey;
   name: string;
   priceUsd: number;
+  description: string;
+  sortOrder: number;
 };
 
 export const BILLING_PLANS: Record<BillingPlanKey, BillingPlanDef> = {
   starter: {
     key: "starter",
-    name: "Real Profit Starter",
+    name: "Starter",
     priceUsd: 19,
+    description:
+      "Core profit visibility for stores that need order, product and daily profit clarity.",
+    sortOrder: 10,
   },
   pro: {
     key: "pro",
-    name: "Real Profit Pro",
+    name: "Pro",
     priceUsd: 49,
+    description:
+      "Full profit intelligence with diagnosis, action planning and scenario simulation.",
+    sortOrder: 20,
   },
   scale: {
     key: "scale",
-    name: "Real Profit Scale",
+    name: "Scale",
     priceUsd: 99,
+    description:
+      "Everything in Pro for larger operators who want the complete decision layer.",
+    sortOrder: 30,
   },
 };
 
@@ -37,12 +48,22 @@ export function getBillingPlanOrThrow(value: any): BillingPlanDef {
   return BILLING_PLANS[value];
 }
 
-export function planFromSubscriptionName(name: any): BillingPlanKey | null {
-  const raw = String(name ?? "").trim();
+export function getBillingPlans(): BillingPlanDef[] {
+  return Object.values(BILLING_PLANS).sort((a, b) => a.sortOrder - b.sortOrder);
+}
 
-  for (const plan of Object.values(BILLING_PLANS)) {
-    if (plan.name === raw) return plan.key;
-  }
+export function planFromSubscriptionName(name: any): BillingPlanKey | null {
+  const raw = String(name ?? "").trim().toLowerCase();
+
+  if (!raw) return null;
+
+  if (raw.includes("scale")) return "scale";
+  if (raw.includes("pro")) return "pro";
+  if (raw.includes("starter")) return "starter";
 
   return null;
+}
+
+export function toShopifySubscriptionName(plan: BillingPlanDef): string {
+  return `Real Profit ${plan.name}`;
 }
